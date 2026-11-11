@@ -118,10 +118,10 @@ else
 fi
 
 sudo apt install -y git
-if [[ ! -d antix-ui ]]; then
+if [[ ! -d antixui ]]; then
   sudo git clone https://github.com/hirogura/antixui.git
 else
-  echo "[info] ./antix-ui already exists, skipping clone"
+  echo "[info] ./antixui already exists, skipping clone"
 fi
-cd antix-ui
+cd antixui
 sudo bash setup.sh
