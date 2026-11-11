@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
 # bing-wallpaper: 1日1回 Bing の今日の画像を取得し、
-#                 GNOME のデスクトップ壁紙に設定する (Snap 不要)
+#                 デスクトップ壁紙に設定する (Snap 不要)
 # ------------------------------------------------------------
+# antiX (desktop-session / feh) と GNOME の両方に対応。
 # /etc/cron.d/bing-wallpaper から root として毎日実行される。
 # 対象ユーザーは引数で指定できるが、省略時は UID>=1000 の
 # /home 配下ユーザーを自動検出する。
@@ -61,18 +62,50 @@ mv -f "$TMP_FILE" "$IMG_FILE"
 } > "$METADATA_FILE"
 chown -R "$RUN_USER:$(id -g "$RUN_USER")" "$IMG_DIR" || true
 
-# --- GNOME の壁紙に設定 (ユーザーのセッションバス経由) ---
-RUN_USER_ENV=(
-    env
-    "XDG_RUNTIME_DIR=/run/user/$RUN_UID"
-    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$RUN_UID/bus"
-)
-if [ -d "/run/user/$RUN_UID" ]; then
+# --- デスクトップ壁紙に設定 ---
+# antiX (desktop-session): ~/.desktop-session/wallpaper-list.conf の
+# 現在のデスクトップ (例: zzz-icewm) エントリを差し替えてから
+# desktop-session-wallpaper で即時反映する。
+WP_DIR="$RUN_HOME/.desktop-session"
+WP_LIST="$WP_DIR/wallpaper-list.conf"
+CODE=""
+[ -f "$WP_DIR/desktop-code.0" ] && CODE="$(head -1 "$WP_DIR/desktop-code.0" 2>/dev/null | tr -d '[:space:]')"
+
+if [ -f "$WP_LIST" ]; then
+    TARGET_CODE="$CODE"
+    if [ -z "$TARGET_CODE" ] || ! grep -q "^${TARGET_CODE}=" "$WP_LIST"; then
+        TARGET_CODE="$(grep -oE '^[A-Za-z0-9_-]+=' "$WP_LIST" | head -1 | tr -d '=')"
+    fi
+    if [ -n "$TARGET_CODE" ]; then
+        sudo -u "$RUN_USER" env HOME="$RUN_HOME" \
+            sed -i "s|^${TARGET_CODE}=.*|${TARGET_CODE}=${IMG_FILE}|" "$WP_LIST" \
+            || echo "warn: wallpaper-list.conf の更新に失敗しました"
+    fi
+    # X セッションがあれば即時反映する
+    XDISP="$(ls /tmp/.X11-unix/ 2>/dev/null | sed 's/^X//' | head -1)"
+    if [ -n "$XDISP" ] && [ -x /usr/local/bin/desktop-session-wallpaper ]; then
+        if sudo -u "$RUN_USER" env HOME="$RUN_HOME" DISPLAY=":$XDISP" XAUTHORITY="$RUN_HOME/.Xauthority" \
+            /usr/local/bin/desktop-session-wallpaper "$TARGET_CODE" >/dev/null 2>&1; then
+            echo "ok: antiX の壁紙を即時反映しました"
+        else
+            echo "warn: 即時反映に失敗しました (次回ログイン時に反映されます)"
+        fi
+    else
+        echo "info: X セッションが無いため、設定は次回ログイン時に反映されます"
+    fi
+    echo "ok: 壁紙を更新しました (ユーザー: $RUN_USER / 画像: $IMG_FILE)"
+elif [ -d "/run/user/$RUN_UID" ]; then
+    # GNOME 系デスクトップ (セッションバス経由)
+    RUN_USER_ENV=(
+        env
+        "XDG_RUNTIME_DIR=/run/user/$RUN_UID"
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$RUN_UID/bus"
+    )
     sudo -u "$RUN_USER" "${RUN_USER_ENV[@]}" gsettings set org.gnome.desktop.background picture-uri "file://$IMG_FILE" 2>/dev/null
     sudo -u "$RUN_USER" "${RUN_USER_ENV[@]}" gsettings set org.gnome.desktop.background picture-uri-dark "file://$IMG_FILE" 2>/dev/null
     echo "ok: 壁紙を更新しました (ユーザー: $RUN_USER / 画像: $IMG_FILE)"
 else
-    echo "warn: 画像は保存されましたが、ユーザーセッションがないため壁紙は更新されませんでした (/run/user/$RUN_UID 無し)"
+    echo "warn: 画像は保存されましたが、壁紙は更新されませんでした (antiX / GNOME の設定が見つかりません)"
 fi
 echo "title: $TITLE"
 echo "copyright: $COPYRIGHT"

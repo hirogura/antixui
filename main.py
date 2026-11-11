@@ -1944,15 +1944,16 @@ async def backup_run(req: Request):
 # ============================================================
 # Cachy-UI (https://github.com/hirogura/cachyos-cachyui.git) を参考に作成。
 # パッケージ操作は Ubuntu/Debian 向けの apt に置き換えている。
-APP_INSTALL_KEYS = ("chrome", "edge", "thunderbird", "libreoffice", "vlc", "ssh", "bing_wall")
+APP_INSTALL_KEYS = ("chrome", "edge", "thunderbird", "libreoffice", "vlc", "ssh", "conky_ja", "bing_wall")
 
 APP_LABELS: dict[str, str] = {
     "chrome": "Google Chrome",
     "edge": "Microsoft Edge",
     "thunderbird": "Thunderbird",
-    "libreoffice": "LibreOffice",
+    "libreoffice": "LibreOffice日本語化",
     "vlc": "VLC",
     "ssh": "SSH",
+    "conky_ja": "Conky日本語表示",
     "bing_wall": "BingWall",
 }
 
@@ -1988,11 +1989,7 @@ async def _check_app_status() -> dict:
     status["thunderbird"] = await _dpkg_installed_status("thunderbird")
     status["vlc"] = await _dpkg_installed_status("vlc")
 
-    lo = await _dpkg_installed_status("libreoffice-core")
-    if not lo["installed"]:
-        w_lo = await run_cmd("which libreoffice 2>/dev/null", timeout=5)
-        lo["installed"] = w_lo["returncode"] == 0
-    status["libreoffice"] = lo
+    status["libreoffice"] = await _dpkg_installed_status("libreoffice-l10n-ja")
 
     q_ssh = await _dpkg_installed_status("openssh-server")
     en_ssh = await run_cmd("systemctl is-enabled ssh 2>/dev/null", timeout=5)
@@ -2009,6 +2006,20 @@ async def _check_app_status() -> dict:
     if q_bw["returncode"] == 0 and len(q_bw["stdout"].splitlines()) > 1:
         bw_detail = q_bw["stdout"].splitlines()[1].split()[1]
     status["bing_wall"] = {"installed": q_bw["returncode"] == 0, "detail": bw_detail}
+
+    # Conky日本語表示: ~/.conkyrc に Noto Sans CJK JP が反映済みか
+    ck_home = (await run_cmd("getent passwd 1000 | cut -d: -f6", timeout=5))["stdout"].strip()
+    if not ck_home:
+        ck_home = "/root"
+    q_ck = await run_cmd(f"grep -q 'Noto Sans CJK JP' '{ck_home}/.conkyrc' 2>/dev/null", timeout=5)
+    q_ck_bak = await run_cmd(f"test -f '{ck_home}/.conkyrc.bak'", timeout=5)
+    if q_ck["returncode"] == 0:
+        ck_detail = "日本語化済み" + (" (バックアップ: ~/.conkyrc.bak)" if q_ck_bak["returncode"] == 0 else "")
+    elif await run_cmd(f"test -f '{ck_home}/.conkyrc'", timeout=5)["returncode"] == 0:
+        ck_detail = "未適用 (~/.conkyrc あり)"
+    else:
+        ck_detail = "未適用 (~/.conkyrc なし)"
+    status["conky_ja"] = {"installed": q_ck["returncode"] == 0, "detail": ck_detail}
     return status
 
 
@@ -2044,7 +2055,7 @@ async def _install_single_app(key: str) -> dict:
         ok = await _step(_sudo("apt-get install -y thunderbird thunderbird-locale-ja"), timeout=1800)
         return {"success": ok, "output": "\n".join(logs)[-3000:]}
     elif key == "libreoffice":
-        ok = await _step(_sudo("apt-get install -y libreoffice libreoffice-l10n-ja libreoffice-help-ja"), timeout=1800)
+        ok = await _step(_sudo("apt-get install -y libreoffice-l10n-ja"), timeout=1800)
         return {"success": ok, "output": "\n".join(logs)[-3000:]}
     elif key == "vlc":
         ok = await _step(_sudo("apt-get install -y vlc"), timeout=1800)
@@ -2053,6 +2064,35 @@ async def _install_single_app(key: str) -> dict:
         if not await _step(_sudo("apt-get install -y openssh-server"), timeout=1800):
             return {"success": False, "output": "\n".join(logs)[-3000:]}
         ok = await _step(_sudo("systemctl enable --now ssh"), timeout=120)
+        return {"success": ok, "output": "\n".join(logs)[-3000:]}
+    elif key == "conky_ja":
+        # Conky の時計表示を日本語化し、フォントを Noto Sans CJK JP に置換する
+        # (プライマリユーザーの ~/.conkyrc を ~/.conkyrc.bak に退避してから編集)
+        username = (await run_cmd("getent passwd 1000 | cut -d: -f1", timeout=5))["stdout"].strip()
+        home = (await run_cmd("getent passwd 1000 | cut -d: -f6", timeout=5))["stdout"].strip()
+        if not username or not home:
+            logs.append("エラー: プライマリユーザー (UID 1000) を特定できません")
+            return {"success": False, "output": "\n".join(logs)[-3000:]}
+        if not await _step(f"test -f '{home}/.conkyrc'"):
+            logs.append(f"エラー: {home}/.conkyrc が見つかりません (conky の設定ファイル)")
+            return {"success": False, "output": "\n".join(logs)[-3000:]}
+        conky_script = (
+            "set -e\n"
+            'cp "$HOME/.conkyrc" "$HOME/.conkyrc.bak"\n'
+            "sed -i '105s|.*|${alignc}${time %Y年%-m月%-d日（%A）}|' \"$HOME/.conkyrc\"\n"
+            "(pkill -HUP conky 2>/dev/null || nohup conky >/dev/null 2>&1 </dev/null &)\n"
+            "sed -i 's/DejaVu Sans/Noto Sans CJK JP/g' \"$HOME/.conkyrc\"\n"
+        )
+        script_path = "/tmp/antixui-conky-ja.sh"
+        if not await _step(
+            f"cat > {script_path} <<'ANTIXUI_CONKY_EOF'\n{conky_script}ANTIXUI_CONKY_EOF\nchmod 644 {script_path}"
+        ):
+            return {"success": False, "output": "\n".join(logs)[-3000:]}
+        ok = await _step(
+            f"sudo -H -u {shlex.quote(username)} bash {script_path} ; rm -f {script_path}"
+        )
+        if ok:
+            logs.append(f"ok: {home}/.conkyrc を日本語化しました (バックアップ: ~/.conkyrc.bak)")
         return {"success": ok, "output": "\n".join(logs)[-3000:]}
     elif key == "bing_wall":
         if not await _step(f"which snap >/dev/null 2>&1 || {_sudo('apt-get install -y snapd')}", timeout=900):
@@ -2477,7 +2517,7 @@ BING_WP_SCRIPT = "/usr/local/bin/bing-wallpaper"
 BING_WP_CRON = "/etc/cron.d/bing-wallpaper"
 BING_WP_CRON_CONTENT = (
     "# /etc/cron.d/bing-wallpaper -- antix-UI が管理しています (v.2.9.3)\n"
-    "# 1日1回 Bing の今日の画像を取得し GNOME のデスクトップ壁紙に設定します\n"
+    "# 1日1回 Bing の今日の画像を取得しデスクトップ壁紙に設定します (antiX / GNOME 対応)\n"
     "SHELL=/bin/bash\n"
     "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n"
     "30 7 * * * root /usr/local/bin/bing-wallpaper\n"

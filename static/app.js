@@ -2236,9 +2236,10 @@ const APPS_INSTALL_DEFS = [
   { key: 'chrome', label: 'Google Chrome', desc: '公式 .deb パッケージを取得してインストール' },
   { key: 'edge', label: 'Microsoft Edge', desc: '公式 .deb パッケージを取得してインストール' },
   { key: 'thunderbird', label: 'Thunderbird', desc: 'thunderbird + 日本語 language pack' },
-  { key: 'libreoffice', label: 'LibreOffice', desc: 'libreoffice + 日本語 language pack / help' },
+  { key: 'libreoffice', label: 'LibreOffice日本語化', desc: 'libreoffice-l10n-ja を導入し LibreOffice を日本語表示にする' },
   { key: 'vlc', label: 'VLC', desc: 'VLC メディアプレイヤー' },
   { key: 'ssh', label: 'SSH', desc: 'openssh-server を導入し sshd を有効化・起動' },
+  { key: 'conky_ja', label: 'Conky日本語表示', desc: '~/.conkyrc の時計を日本語化しフォントを Noto Sans CJK JP に変更 (バックアップ: ~/.conkyrc.bak)' },
 ];
 
 async function loadAppsPage() {
