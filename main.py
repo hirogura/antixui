@@ -2692,6 +2692,7 @@ async def system_selfupdate():
 
     script = "\n".join([
         "set -e",
+        'export HOME="${HOME:-/root}"',
         f"echo $$ > {ANTIXUI_UPDATE_PID}",
         f"trap 'rm -f {ANTIXUI_UPDATE_PID}' EXIT",
         f"exec > {ANTIXUI_UPDATE_LOG} 2>&1",

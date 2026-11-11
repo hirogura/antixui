@@ -15,6 +15,11 @@
 # ============================================================
 set -euo pipefail
 
+# サービス経由で実行されると HOME が未設定の場合があり、
+# git config --global が "fatal: $HOME not set" で失敗するため補完する
+: "${HOME:=/root}"
+export HOME
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 APP_NAME="antix-UI"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
