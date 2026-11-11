@@ -120,8 +120,11 @@ fi
 sudo apt install -y git
 if [[ ! -d antixui ]]; then
   sudo git clone https://github.com/hirogura/antixui.git
+  cd antixui
 else
-  echo "[info] ./antixui already exists, skipping clone"
+  echo "[info] ./antixui already exists, updating to latest..."
+  cd antixui
+  sudo git fetch origin main
+  sudo git reset --hard origin/main
 fi
-cd antixui
 sudo bash setup.sh
