@@ -15,7 +15,13 @@ ask_yn() {
     done
 }
 
-sudo timedatectl set-timezone Asia/Tokyo
+if command -v timedatectl >/dev/null 2>&1; then
+    sudo timedatectl set-timezone Asia/Tokyo
+else
+    # systemd 配下でない環境（antiX 等）では timedatectl が存在しないため直接設定する
+    echo "Asia/Tokyo" | sudo tee /etc/timezone >/dev/null
+    sudo ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+fi
 
 sudo apt update
 
