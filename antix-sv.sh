@@ -119,7 +119,7 @@ fi
 
 sudo apt install -y git
 if [[ ! -d antix-ui ]]; then
-  sudo git clone https://github.com/hirogura/antix-ui.git
+  sudo git clone https://github.com/hirogura/antixui.git
 else
   echo "[info] ./antix-ui already exists, skipping clone"
 fi
