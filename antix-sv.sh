@@ -15,6 +15,35 @@ ask_yn() {
     done
 }
 
+# --- tailscaled デーモン起動確認 ---
+# antiX は sysvinit なので systemd のサービス起動が行われず、
+# tailscaled が起動していない状態で tailscale up を実行すると失敗する
+ensure_tailscaled() {
+    if pgrep -x tailscaled >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -x /etc/init.d/tailscaled ]; then
+        sudo /etc/init.d/tailscaled start
+    elif [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl enable --now tailscaled
+    elif command -v tailscaled >/dev/null 2>&1; then
+        sudo mkdir -p /var/lib/tailscale /var/run/tailscale
+        sudo sh -c 'nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock >/var/log/tailscaled.log 2>&1 &'
+    else
+        echo "[error] tailscaled が見つかりません。Tailscale のインストールを確認してください。" >&2
+        return 1
+    fi
+    local i
+    for i in $(seq 1 30); do
+        if [ -S /var/run/tailscale/tailscaled.sock ]; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[error] tailscaled の起動に失敗しました。/var/log/tailscaled.log を確認してください。" >&2
+    return 1
+}
+
 if command -v timedatectl >/dev/null 2>&1; then
     sudo timedatectl set-timezone Asia/Tokyo
 else
@@ -46,6 +75,8 @@ else
     USE_TS_AUTHKEY=false
 fi
 echo ""
+
+ensure_tailscaled
 
 if [ "$USE_TS_AUTHKEY" = true ]; then
     # authkey認証に失敗した場合は、別のキー再試行かブラウザ認証かを選択させる
