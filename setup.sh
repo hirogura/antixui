@@ -19,10 +19,10 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 APP_NAME="antix-UI"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="/opt/antix-ui"
-ANTIX_DIR="$APP_DIR/antix"
+ANTIX_DIR="$BASE_DIR/antix"
 APP_USER="antixui"
 APP_PORT=3355
-REPO_URL="https://github.com/hirogura/antix-ui.git"
+REPO_URL="https://github.com/hirogura/antixui.git"
 BRANCH="main"
 NO_RESTART=0
 
