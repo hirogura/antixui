@@ -2657,7 +2657,7 @@ async def system_selfupdate():
         f"exec > {ANTIXUI_UPDATE_LOG} 2>&1",
         'echo "[antix-UI update] start $(date)"',
         "rm -rf /tmp/antixui-update",
-        "git clone --depth 1 https://github.com/hirogura/antix-ui.git /tmp/antixui-update",
+        "git clone --depth 1 https://github.com/hirogura/antixui.git /tmp/antixui-update",
         "bash /tmp/antixui-update/setup.sh --no-restart",
         'echo "[antix-UI update] done $(date)"',
         "echo __ANTIXUI_UPDATE_DONE__",

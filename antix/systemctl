@@ -115,10 +115,54 @@ EOF
     return 0
 }
 
-# サービスが起動しているか (init.d スクリプトの status で判定)
+# runit を PID1 とし sysv エミュレーションが無効な環境か
+# (この環境では rc*.d スクリプトは起動時に実行されない)
+runit_native() {
+    [ "$(ps -p 1 -o comm= 2>/dev/null)" = "runit" ] \
+        && { [ -e /etc/runit/no.emulate.sysv ] || [ ! -e /lib/runit/run_sysv_scripts ]; }
+}
+
+# systemd ユニットから runit サービス (/etc/service/<unit>/run) を生成する
+make_runit_service() {
+    local n="$1" u f execstart wd envs user
+    [ -x "/etc/service/$n/run" ] && return 0
+    for f in /etc/systemd/system/$n.service /lib/systemd/system/$n.service \
+             /usr/lib/systemd/system/$n.service; do
+        [ -f "$f" ] || continue
+        u="$f"
+        break
+    done
+    [ -n "$u" ] || return 0
+    execstart=$(grep -m1 '^ExecStart=' "$u" | sed 's/^ExecStart=//; s/^-*//')
+    [ -n "$execstart" ] || return 0
+    wd=$(grep -m1 '^WorkingDirectory=' "$u" | sed 's/^WorkingDirectory=//')
+    envs=$(grep '^Environment=' "$u" | sed 's/^Environment=//' | tr '\n' ' ')
+    user=$(grep -m1 '^User=' "$u" | sed 's/^User=//')
+    wd=${wd:-/}
+    mkdir -p "/etc/service/$n"
+    {
+        echo '#!/bin/sh'
+        echo 'exec 2>&1'
+        echo "cd '$wd'"
+        [ -n "$envs" ] && echo "export $envs"
+        if [ -n "$user" ] && [ "$user" != "root" ]; then
+            echo "exec setpriv --reuid $user --regid $user --init-groups $execstart >> '/var/log/$n.log' 2>&1"
+        else
+            echo "exec $execstart >> '/var/log/$n.log' 2>&1"
+        fi
+    } > "/etc/service/$n/run"
+    chmod 755 "/etc/service/$n/run"
+    return 0
+}
+
+# サービスが起動しているか (runit サービスなら sv、それ以外は init.d の status で判定)
 is_active_rc() {
     local n; n=$(norm_unit "$1")
-    "$INITDIR/$n" status >/dev/null 2>&1
+    if [ -x "/etc/service/$n/run" ]; then
+        SVDIR=/etc/service sv status "$n" >/dev/null 2>&1
+    else
+        "$INITDIR/$n" status >/dev/null 2>&1
+    fi
 }
 
 is_enabled_rc() {
@@ -129,8 +173,10 @@ is_enabled_rc() {
 CMD="$1"; [ -n "$CMD" ] || usage_exit
 shift
 # 先頭に付くフラグ付き引数 (--quiet 等) を除去する
+NOW=0
 while [ "$#" -gt 0 ] && [ "${1#-}" != "$1" ]; do
     if [ "$1" = "--quiet" ]; then QUIET=1; fi
+    if [ "$1" = "--now" ]; then NOW=1; fi
     shift
 done
 
@@ -163,6 +209,15 @@ case "$CMD" in
     is-active)
         [ $# -ge 1 ] || usage_exit is-active
         n=$(norm_unit "$1")
+        if runit_native && [ -x "/etc/service/$n/run" ]; then
+            if SVDIR=/etc/service sv status "$n" >/dev/null 2>&1; then
+                [ "$QUIET" = "1" ] || echo "active"
+                exit 0
+            else
+                [ "$QUIET" = "1" ] || echo "inactive"
+                exit 3
+            fi
+        fi
         if unit_exists "$n" && is_active_rc "$n"; then
             [ "$QUIET" = "1" ] || echo "active"
             exit 0
@@ -185,6 +240,10 @@ case "$CMD" in
     status)
         [ $# -ge 1 ] || usage_exit status
         n=$(norm_unit "$1")
+        if runit_native && [ -x "/etc/service/$n/run" ]; then
+            SVDIR=/etc/service sv status "$n"
+            exit $?
+        fi
         if unit_exists "$n"; then
             "$INITDIR/$n" status
             exit $?
@@ -202,6 +261,27 @@ case "$CMD" in
         case "$CMD" in
             try-restart) CMD=restart ;;
         esac
+        if runit_native; then
+            # 既存環境 (init.d のみ生成済み) 向けに runit サービスを補完する
+            make_runit_service "$n"
+            if [ -x "/etc/service/$n/run" ]; then
+                case "$CMD" in
+                    start)
+                        SVDIR=/etc/service sv start "$n"
+                        exit $?
+                        ;;
+                    stop)
+                        SVDIR=/etc/service sv stop "$n"
+                        exit $?
+                        ;;
+                    restart|reload)
+                        SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
+                        SVDIR=/etc/service sv start "$n"
+                        exit $?
+                        ;;
+                esac
+            fi
+        fi
         "$INITDIR/$n" "$CMD"
         exit $?
         ;;
@@ -209,28 +289,45 @@ case "$CMD" in
     # ---- 有効化・無効化 ----
     enable|disable)
         [ $# -ge 1 ] || usage_exit "$CMD"
-        # オプション引数を飛ばして unit 名を取得
-        while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done
+        # --now はグローバルのフラグ処理 (unit 名の前方) と下記ループ (後方) の両方で検出
+        # オプション引数を処理しつつ unit 名を取得
+        while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do
+            [ "$1" = "--now" ] && NOW=1
+            shift
+        done
         [ $# -ge 1 ] || usage_exit "$CMD"
         n=$(norm_unit "$1"); shift
-        # enable --now / disable --now 対応
-        NOW=0
         for a in "$@"; do
             [ "$a" = "--now" ] && NOW=1
         done
         unit_exists "$n" || { echo "Unit $n.service not found." >&2; exit 5; }
+        if runit_native; then
+            make_runit_service "$n"
+        fi
         RC=0
         if [ "$CMD" = "enable" ]; then
             update-rc.d "$n" defaults >/dev/null 2>&1 || RC=$?
             if [ "$RC" -eq 0 ]; then echo "Created symlink $n.service"; fi
         else
             update-rc.d -f "$n" remove >/dev/null 2>&1 || RC=$?
+            if runit_native && [ -d "/etc/service/$n" ]; then
+                SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
+                rm -rf "/etc/service/$n"
+            fi
         fi
         if [ "$NOW" -eq 1 ] && [ "$RC" -eq 0 ]; then
-            if [ "$CMD" = "enable" ]; then
-                "$INITDIR/$n" start >/dev/null 2>&1 || true
+            if runit_native && [ -x "/etc/service/$n/run" ]; then
+                if [ "$CMD" = "enable" ]; then
+                    SVDIR=/etc/service sv start "$n" >/dev/null 2>&1 || true
+                else
+                    SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
+                fi
             else
-                "$INITDIR/$n" stop >/dev/null 2>&1 || true
+                if [ "$CMD" = "enable" ]; then
+                    "$INITDIR/$n" start >/dev/null 2>&1 || true
+                else
+                    "$INITDIR/$n" stop >/dev/null 2>&1 || true
+                fi
             fi
         fi
         exit $RC

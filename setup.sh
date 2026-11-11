@@ -202,6 +202,9 @@ EOF
 fi
 
 # --- サービス起動 ---
+if [ "$NO_RESTART" = 1 ]; then
+    info "--no-restart 指定のためサービスの起動・再起動はスキップします"
+else
 log "antix-UI を起動..."
 if [ "$RUNIT_MODE" = 1 ]; then
     export SVDIR=/etc/service
@@ -228,6 +231,7 @@ else
     else
         err "antix-UI が起動していません。ログを確認してください: /var/log/antixui.log"
     fi
+fi
 fi
 
 # --- Tailscale serve (HTTPS 公開) ---
