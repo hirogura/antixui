@@ -54,6 +54,40 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+def _is_runit_native() -> bool:
+    """runit が PID1 で sysv エミュレーションが無効か (systemctl shim と同じ判定)。"""
+    try:
+        with open("/proc/1/comm") as f:
+            if f.read().strip() != "runit":
+                return False
+    except OSError:
+        return False
+    return os.path.exists("/etc/runit/no.emulate.sysv") or not os.path.exists("/lib/runit/run_sysv_scripts")
+
+
+@app.on_event("startup")
+async def _sync_third_party_runit_services():
+    """起動時に runit 環境のサードパーティサービスを同期する。
+
+    旧 shim でインストールされた selfcode / diskmanager 等は rc*.d リンクのみで
+    /etc/service 配下の runit サービスが無いため、再起動後に起動しない。
+    systemctl shim の sync-services で補完生成する (disable 済みのものは
+    shim 側で記録されているため再生成されない)。
+    """
+    if not _is_runit_native():
+        return
+    shim = "/usr/local/bin/systemctl"
+    if not os.path.isfile(shim):
+        return
+    argv = [shim, "sync-services"] if IS_ROOT else ["sudo", "-n", shim, "sync-services"]
+    try:
+        await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+    except OSError:
+        logging.getLogger("uvicorn.error").warning("systemctl shim (sync-services) の起動に失敗しました")
+
+
 def _sudo(cmd: str) -> str:
     """Prefix command with sudo when not running as root."""
     if IS_ROOT:

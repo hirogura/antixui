@@ -9,6 +9,9 @@
 # ============================================================
 
 INITDIR=/etc/init.d
+# runit 環境で disable されたサービスを記録しておく場所。
+# sync-services が disable 済みのユニットから runit サービスを再生成しないようにする。
+DISABLED_DIR=/var/lib/systemctl-shim/disabled
 
 usage_exit() {
     echo "systemctl shim for antiX: unsupported arguments: $*" >&2
@@ -126,6 +129,8 @@ runit_native() {
 make_runit_service() {
     local n="$1" u f execstart wd envs user
     [ -x "/etc/service/$n/run" ] && return 0
+    # ユーザーが明示的に disable したものは再生成しない
+    [ -f "$DISABLED_DIR/$n" ] && return 0
     for f in /etc/systemd/system/$n.service /lib/systemd/system/$n.service \
              /usr/lib/systemd/system/$n.service; do
         [ -f "$f" ] || continue
@@ -167,6 +172,8 @@ is_active_rc() {
 
 is_enabled_rc() {
     local n; n=$(norm_unit "$1")
+    # runit 環境で生成済みのサービスは rc*.d リンクが無くても enabled と見なす
+    [ -x "/etc/service/$n/run" ] && return 0
     ls /etc/rc2.d/S??"$n" /etc/rc3.d/S??"$n" /etc/rc5.d/S??"$n" >/dev/null 2>&1
 }
 
@@ -306,6 +313,7 @@ case "$CMD" in
         fi
         RC=0
         if [ "$CMD" = "enable" ]; then
+            rm -f "$DISABLED_DIR/$n" 2>/dev/null || true
             update-rc.d "$n" defaults >/dev/null 2>&1 || RC=$?
             if [ "$RC" -eq 0 ]; then echo "Created symlink $n.service"; fi
         else
@@ -313,6 +321,9 @@ case "$CMD" in
             if runit_native && [ -d "/etc/service/$n" ]; then
                 SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
                 rm -rf "/etc/service/$n"
+                # disable 済みを記録し、sync-services による再生成を防ぐ
+                mkdir -p "$DISABLED_DIR" 2>/dev/null || true
+                : > "$DISABLED_DIR/$n" 2>/dev/null || true
             fi
         fi
         if [ "$NOW" -eq 1 ] && [ "$RC" -eq 0 ]; then
@@ -335,6 +346,33 @@ case "$CMD" in
 
     enable\ --now)
         # シェル経由では来ないが念のため
+        ;;
+
+    # ---- runit 環境のサードパーティサービス同期 ----
+    # 旧 shim で enable されたサービスは rc*.d リンクのみで /etc/service が無く、
+    # 再起動後に起動しない (selfcode / diskmanager 等が該当)。
+    # /etc/systemd/system 配下のユニットから runit サービスを補完生成する。
+    sync-services)
+        if runit_native; then
+            for u in /etc/systemd/system/*.service; do
+                [ -f "$u" ] || continue
+                n=$(basename "$u"); n=${n%.service}
+                case "$n" in
+                    # 自前で管理しているもの・システム標準のものは対象外
+                    antixui|tailscaled|rc-local|dbus|systemd-*|user@*|getty@*) continue ;;
+                esac
+                [ -x "/etc/service/$n/run" ] && continue
+                # ユーザーが明示的に disable したものは復活させない
+                [ -f "$DISABLED_DIR/$n" ] && continue
+                execstart=$(grep -m1 '^ExecStart=' "$u" | sed 's/^ExecStart=//; s/^-*//')
+                [ -n "$execstart" ] || continue
+                # すでに手動起動等で動いているものは生成しない
+                # (runit 監下で二重起動となりポート競合のクラッシュループを起こすため)
+                if pgrep -f "$execstart" >/dev/null 2>&1; then continue; fi
+                make_runit_service "$n"
+            done
+        fi
+        exit 0
         ;;
 
     mask|unmask)

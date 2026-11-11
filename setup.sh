@@ -204,6 +204,10 @@ exec /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/
 EOF
         chmod 755 /etc/service/tailscaled/run
     fi
+
+    # 旧 shim で enable されたサードパーティサービス (selfcode / diskmanager 等) を
+    # runit サービスとして補完登録する (disable 済みのものは shim が記録していてスキップ)
+    "$ANTIX_DIR/systemctl" sync-services >/dev/null 2>&1 || true
 fi
 
 # --- サービス起動 ---
