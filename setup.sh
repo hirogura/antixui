@@ -154,19 +154,80 @@ fi
 
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
-# --- sysVinit サービス ---
+# --- sysVinit サービス (runit 環境でも手動制御用に導入しておく) ---
 log "/etc/init.d/antixui を作成..."
 install -m 755 "$ANTIX_DIR/antixui.init" /etc/init.d/antixui
 log "update-rc.d で自動起動を登録..."
 update-rc.d antixui defaults
 
+# --- runit 環境の検出 ---
+# PID1 が runit で sysv エミュレーションが無効 (no.emulate.sysv 有効 / run_sysv_scripts 無し)
+# の場合、update-rc.d で登録したサービスは再起動後に起動しないため runit サービスで登録する
+RUNIT_MODE=0
+if [ "$(ps -p 1 -o comm= 2>/dev/null || true)" = "runit" ] \
+   && { [ -e /etc/runit/no.emulate.sysv ] || [ ! -e /lib/runit/run_sysv_scripts ]; }; then
+    RUNIT_MODE=1
+fi
+
+if [ "$RUNIT_MODE" = 1 ]; then
+    log "runit 環境 (sysv エミュレーション無効) を検出: runit サービスとして登録します..."
+
+    # 二重起動防止のため sysv 側の登録を解除
+    /etc/init.d/antixui stop >/dev/null 2>&1 || true
+    update-rc.d -f antixui remove >/dev/null 2>&1 || true
+
+    mkdir -p /etc/service
+    install -d -m 755 /etc/service/antixui
+    cat > /etc/service/antixui/run <<EOF
+#!/bin/sh
+exec 2>&1
+cd $APP_DIR
+exec $APP_DIR/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port $APP_PORT >>/var/log/antixui.log 2>&1
+EOF
+    chmod 755 /etc/service/antixui/run
+
+    # tailscaled も rc2.d に依存すると再起動後に起動しないので runit サービスで登録
+    if [ ! -d /etc/service/tailscaled ] && [ -x /usr/sbin/tailscaled ]; then
+        /etc/init.d/tailscaled stop >/dev/null 2>&1 || true
+        update-rc.d -f tailscaled remove >/dev/null 2>&1 || true
+        install -d -m 755 /etc/service/tailscaled
+        cat > /etc/service/tailscaled/run <<EOF
+#!/bin/sh
+exec 2>&1
+mkdir -p /var/lib/tailscale /run/tailscale
+exec /usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock >>/var/log/tailscaled.log 2>&1
+EOF
+        chmod 755 /etc/service/tailscaled/run
+    fi
+fi
+
+# --- サービス起動 ---
 log "antix-UI を起動..."
-/etc/init.d/antixui restart || err "antix-UI の起動に失敗しました"
-sleep 2
-if /etc/init.d/antixui status >/dev/null 2>&1; then
-    log "antix-UI がポート $APP_PORT で稼働中"
+if [ "$RUNIT_MODE" = 1 ]; then
+    export SVDIR=/etc/service
+    sv start antixui >/dev/null 2>&1 || true
+    i=0
+    while [ $i -lt 20 ]; do
+        sv status antixui >/dev/null 2>&1 && break
+        i=$((i + 1))
+        sleep 1
+    done
 else
-    err "antix-UI が起動していません。ログを確認してください: /var/log/antixui.log"
+    /etc/init.d/antixui restart || err "antix-UI の起動に失敗しました"
+    sleep 2
+fi
+if [ "$RUNIT_MODE" = 1 ]; then
+    if sv status antixui >/dev/null 2>&1; then
+        log "antix-UI がポート $APP_PORT で稼働中 (runit service: /etc/service/antixui)"
+    else
+        err "antix-UI が起動していません。ログを確認してください: /var/log/antixui.log"
+    fi
+else
+    if /etc/init.d/antixui status >/dev/null 2>&1; then
+        log "antix-UI がポート $APP_PORT で稼働中"
+    else
+        err "antix-UI が起動していません。ログを確認してください: /var/log/antixui.log"
+    fi
 fi
 
 # --- Tailscale serve (HTTPS 公開) ---
@@ -184,7 +245,11 @@ echo -e "${GREEN}  ✅ antix-UI セットアップ完了!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 echo -e "  ${CYAN}ローカルURL:${NC}  http://127.0.0.1:$APP_PORT"
-echo -e "  ${CYAN}サービス:${NC}    /etc/init.d/antixui {start|stop|restart|status}"
+if [ "$RUNIT_MODE" = 1 ]; then
+    echo -e "  ${CYAN}サービス:${NC}    sv {start|stop|restart|status} antixui (SVDIR=/etc/service)"
+else
+    echo -e "  ${CYAN}サービス:${NC}    /etc/init.d/antixui {start|stop|restart|status}"
+fi
 echo -e "  ${CYAN}ログ:${NC}        /var/log/antixui.log"
 echo -e "  ${CYAN}導入先:${NC}      $APP_DIR"
 echo -e "  ${CYAN}shim:${NC}        /usr/local/bin/systemctl (sysVinit 変換)"
