@@ -68,9 +68,8 @@ bash ubsv.sh
 ### 自動インストール (通常)
 
 ```bash
-git clone https://github.com/hirogura/servui.git
-cd servui
-sudo bash setup.sh
+wget https://raw.githubusercontent.com/hirogura/antixui/main/antix-sv.sh
+bash antix-sv.sh
 ```
 
 オプション:
