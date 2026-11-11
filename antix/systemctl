@@ -1,0 +1,258 @@
+#!/bin/bash
+# ============================================================
+# systemctl shim for antiX (sysVinit / runit)
+# ------------------------------------------------------------
+# antiX には systemd がないため、serv-UI などが発行する
+# systemctl コマンドを /etc/init.d スクリプト + update-rc.d
+# に変換してエミュレートする。
+# 本物の systemd がある場合はこの shim はインストールしない。
+# ============================================================
+
+INITDIR=/etc/init.d
+
+usage_exit() {
+    echo "systemctl shim for antiX: unsupported arguments: $*" >&2
+    exit 1
+}
+
+# unit 名を正規化 (.service 末尾を除去)
+norm_unit() {
+    local u="$1"
+    echo "${u%.service}"
+}
+
+unit_exists() {
+    local n; n=$(norm_unit "$1")
+    [ -x "$INITDIR/$n" ] || import_unit "$n"
+    [ -x "$INITDIR/$n" ]
+}
+
+# systemd ユニットファイルが存在するが init.d スクリプトが無い場合、
+# そこから init.d スクリプトを自動生成する (selfcode 等のサードパーティ
+# インストーラが systemctl enable --now を実行するケースに対応)
+import_unit() {
+    local n="$1" u f
+    for f in /etc/systemd/system/$n.service /lib/systemd/system/$n.service \
+             /usr/lib/systemd/system/$n.service; do
+        [ -f "$f" ] || continue
+        u="$f"
+        break
+    done
+    [ -n "$u" ] || return 0
+    # ExecStart / WorkingDirectory / Environment / User を抽出
+    local execstart wd envs user
+    execstart=$(grep -m1 '^ExecStart=' "$u" | sed 's/^ExecStart=//; s/^-*//')
+    wd=$(grep -m1 '^WorkingDirectory=' "$u" | sed 's/^WorkingDirectory=//')
+    envs=$(grep '^Environment=' "$u" | sed 's/^Environment=//' | tr '\n' ' ')
+    user=$(grep -m1 '^User=' "$u" | sed 's/^User=//')
+    [ -n "$execstart" ] || return 0
+    wd=${wd:-/}
+    cat > "$INITDIR/$n" <<EOF
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          $n
+# Required-Start:    \$network \$remote_fs
+# Required-Stop:     \$network \$remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: $n service (generated from $u)
+### END INIT INFO
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NAME="$n"
+PIDFILE=/run/$n.pid
+LOGFILE=/var/log/$n.log
+WORKDIR="$wd"
+ENVS="$envs"
+RUNUSER="$user"
+STARTCMD="$execstart"
+
+. /lib/lsb/init-functions
+
+run_cmd() {
+    if [ -n "\$RUNUSER" ] && [ "\$(id -u)" = "0" ]; then
+        start-stop-daemon --start --chuid "\$RUNUSER" --chdir "\$WORKDIR" \
+            --pidfile "\$PIDFILE" --make-pidfile --background \
+            --output "\$LOGFILE" --startas /bin/sh \
+            -- -c "\$ENVS exec \$STARTCMD"
+    else
+        start-stop-daemon --start --chdir "\$WORKDIR" \
+            --pidfile "\$PIDFILE" --make-pidfile --background \
+            --output "\$LOGFILE" --startas /bin/sh \
+            -- -c "\$ENVS exec \$STARTCMD"
+    fi
+}
+
+case "\$1" in
+  start)
+    log_daemon_msg "Starting \$NAME"
+    if start-stop-daemon --stop --pidfile "\$PIDFILE" --quiet --oknodo 2>/dev/null; then
+        rm -f "\$PIDFILE"
+    fi
+    run_cmd
+    log_end_msg \$?
+    ;;
+  stop)
+    log_daemon_msg "Stopping \$NAME"
+    start-stop-daemon --stop --pidfile "\$PIDFILE" --retry=TERM/5/KILL/5
+    rm -f "\$PIDFILE"
+    log_end_msg \$?
+    ;;
+  restart|force-reload)
+    "\$0" stop
+    sleep 1
+    "\$0" start
+    ;;
+  status)
+    status_of_proc -p "\$PIDFILE" "\$NAME" "\$NAME" && exit 0 || exit \$?
+    ;;
+  *)
+    echo "Usage: /etc/init.d/\$NAME {start|stop|restart|status}" >&2
+    exit 3
+    ;;
+esac
+EOF
+    chmod 755 "$INITDIR/$n"
+    return 0
+}
+
+# サービスが起動しているか (init.d スクリプトの status で判定)
+is_active_rc() {
+    local n; n=$(norm_unit "$1")
+    "$INITDIR/$n" status >/dev/null 2>&1
+}
+
+is_enabled_rc() {
+    local n; n=$(norm_unit "$1")
+    ls /etc/rc2.d/S??"$n" /etc/rc3.d/S??"$n" /etc/rc5.d/S??"$n" >/dev/null 2>&1
+}
+
+CMD="$1"; [ -n "$CMD" ] || usage_exit
+shift
+# 先頭に付くフラグ付き引数 (--quiet 等) を除去する
+while [ "$#" -gt 0 ] && [ "${1#-}" != "$1" ]; do
+    if [ "$1" = "--quiet" ]; then QUIET=1; fi
+    shift
+done
+
+case "$CMD" in
+    # ---- 何もしなくてよいもの ----
+    daemon-reload|reset-failed)
+        exit 0
+        ;;
+
+    # ---- ユニット一覧 ----
+    list-units|list-unit-files)
+        # serv-UI は "--type=service --all --no-pager --plain --no-legend" で
+        # "name active sub" 形式を期待して parse する
+        for f in "$INITDIR"/*; do
+            [ -x "$f" ] || continue
+            n=$(basename "$f")
+            case "$n" in
+                README|rc|rcS|rc0|rc1|rc2|rc3|rc4|rc5|rc6|single|skeleton|umountfs|halt|reboot) continue ;;
+            esac
+            if is_active_rc "$n"; then
+                echo "$n.service active running"
+            else
+                echo "$n.service inactive dead"
+            fi
+        done
+        exit 0
+        ;;
+
+    # ---- 状態照会 ----
+    is-active)
+        [ $# -ge 1 ] || usage_exit is-active
+        n=$(norm_unit "$1")
+        if unit_exists "$n" && is_active_rc "$n"; then
+            [ "$QUIET" = "1" ] || echo "active"
+            exit 0
+        else
+            [ "$QUIET" = "1" ] || echo "inactive"
+            exit 3
+        fi
+        ;;
+
+    is-enabled)
+        [ $# -ge 1 ] || usage_exit is-enabled
+        n=$(norm_unit "$1")
+        if unit_exists "$n" && is_enabled_rc "$n"; then
+            echo "enabled"; exit 0
+        else
+            echo "disabled"; exit 1
+        fi
+        ;;
+
+    status)
+        [ $# -ge 1 ] || usage_exit status
+        n=$(norm_unit "$1")
+        if unit_exists "$n"; then
+            "$INITDIR/$n" status
+            exit $?
+        fi
+        echo "Unit $n.service could not be found." >&2
+        exit 4
+        ;;
+
+    # ---- 起動・停止系 (systemctl kill は stop にフォールバック) ----
+    start|stop|restart|reload|try-restart|kill)
+        [ "$CMD" = "kill" ] && CMD=stop
+        [ $# -ge 1 ] || usage_exit "$CMD"
+        n=$(norm_unit "$1")
+        unit_exists "$n" || { echo "Unit $n.service not found." >&2; exit 5; }
+        case "$CMD" in
+            try-restart) CMD=restart ;;
+        esac
+        "$INITDIR/$n" "$CMD"
+        exit $?
+        ;;
+
+    # ---- 有効化・無効化 ----
+    enable|disable)
+        [ $# -ge 1 ] || usage_exit "$CMD"
+        # オプション引数を飛ばして unit 名を取得
+        while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done
+        [ $# -ge 1 ] || usage_exit "$CMD"
+        n=$(norm_unit "$1"); shift
+        # enable --now / disable --now 対応
+        NOW=0
+        for a in "$@"; do
+            [ "$a" = "--now" ] && NOW=1
+        done
+        unit_exists "$n" || { echo "Unit $n.service not found." >&2; exit 5; }
+        RC=0
+        if [ "$CMD" = "enable" ]; then
+            update-rc.d "$n" defaults >/dev/null 2>&1 || RC=$?
+            if [ "$RC" -eq 0 ]; then echo "Created symlink $n.service"; fi
+        else
+            update-rc.d -f "$n" remove >/dev/null 2>&1 || RC=$?
+        fi
+        if [ "$NOW" -eq 1 ] && [ "$RC" -eq 0 ]; then
+            if [ "$CMD" = "enable" ]; then
+                "$INITDIR/$n" start >/dev/null 2>&1 || true
+            else
+                "$INITDIR/$n" stop >/dev/null 2>&1 || true
+            fi
+        fi
+        exit $RC
+        ;;
+
+    enable\ --now)
+        # シェル経由では来ないが念のため
+        ;;
+
+    mask|unmask)
+        [ $# -ge 1 ] || usage_exit "$CMD"
+        exit 0
+        ;;
+
+    # ---- 未対応 ----
+    reboot|poweroff|halt)
+        # 呼び出し元がフォールバック (reboot コマンド) を持つので失敗させてよい
+        echo "systemctl shim: use reboot/poweroff commands directly on antiX" >&2
+        exit 1
+        ;;
+
+    *)
+        usage_exit "$CMD" "$@"
+        ;;
+esac

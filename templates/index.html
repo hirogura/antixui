@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>serv-UI</title>
+  <title>antix-UI</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css?v=10">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
@@ -17,7 +17,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       </div>
       <div class="logo-info">
-        <span class="logo-text">serv-UI<span class="logo-version">v.2.9.6</span></span>
+        <span class="logo-text">antix-UI<span class="logo-version">v.2.9.6</span></span>
         <span class="logo-hostname" id="sidebar-hostname">...</span>
       </div>
     </div>
@@ -78,31 +78,27 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22z"/><path d="M10 12h4"/></svg>
         <span>バックアップ/復元</span>
       </li>
-      <li data-tab="timeshift">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span>Timeshift</span>
-      </li>
       <li data-tab="apps">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v6M14.5 17h6"/></svg>
         <span>アプリ/設定</span>
       </li>
       <li data-tab="fleet">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        <span>serv-UI一括管理</span>
+        <span>antix-UI一括管理</span>
       </li>
     </ul>
     <div class="sidebar-footer">
       <button class="btn-sidebar" onclick="refreshCurrentTab()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-        <span>serv-UIリフレッシュ</span>
+        <span>antix-UIリフレッシュ</span>
       </button>
       <button class="btn-sidebar btn-restart" onclick="restartServUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-        <span>serv-UI再起動</span>
+        <span>antix-UI再起動</span>
       </button>
       <button class="btn-sidebar btn-update" onclick="updateServUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="8"/><polyline points="8 12 12 8 16 12"/></svg>
-        <span>serv-UIアップデート</span>
+        <span>antix-UIアップデート</span>
       </button>
       <button class="btn-sidebar btn-reboot" onclick="rebootSystem()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
@@ -522,119 +518,6 @@
       </div>
     </section>
 
-    <!-- Timeshift -->
-    <section id="tab-timeshift" class="tab-content">
-      <h1>Timeshift</h1>
-      <div id="timeshift-status-msg" class="status-msg"></div>
-
-      <h2>この機能について</h2>
-      <div class="stat-card">
-        <ul class="backup-notes">
-          <li><strong>rsync モード</strong>と <strong>btrfs モード</strong>の両方に対応しています。</li>
-          <li>スケジュールを設定すると Cron によりスナップショットが自動作成されます（既定は手動作成のみ）。</li>
-          <li>スナップショットの復元は、実行したあとに再起動してください。</li>
-        </ul>
-        <div id="timeshift-env-status" class="backup-env-status"><span class="spinner"></span> 状態を確認中...</div>
-      </div>
-
-      <h2>セットアップ</h2>
-      <div class="stat-card">
-        <p class="muted" style="margin-bottom:0.75rem;">
-          Timeshift をインストールします。
-        </p>
-        <button class="btn btn-primary" id="btn-timeshift-install" onclick="installTimeshift()" disabled>
-          Timeshiftをインストール
-        </button>
-      </div>
-
-      <h2>スナップショット作成</h2>
-      <div class="stat-card">
-        <p class="muted" style="margin-bottom:0.75rem;">現在のシステムのスナップショットを作成します。</p>
-        <div class="form-group">
-          <label>スナップショット形式</label>
-          <div style="display:flex;flex-wrap:wrap;gap:1.25rem;align-items:center;">
-            <label style="display:flex;align-items:center;gap:0.45rem;margin:0;cursor:pointer;">
-              <input type="radio" name="timeshift-mode" id="ts-mode-rsync" value="rsync" onchange="setTimeshiftMode('rsync')">
-              rsync
-            </label>
-            <label style="display:flex;align-items:center;gap:0.45rem;margin:0;cursor:pointer;">
-              <input type="radio" name="timeshift-mode" id="ts-mode-btrfs" value="btrfs" onchange="setTimeshiftMode('btrfs')">
-              btrfs
-            </label>
-            <span id="ts-mode-note" class="muted" style="font-size:0.75rem;"></span>
-          </div>
-        </div>
-        <div class="form-group">
-          <label for="timeshift-comment">コメント（任意）</label>
-          <input type="text" id="timeshift-comment" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text);" placeholder="例: インストール後のクリーン状態">
-        </div>
-        <div class="form-group">
-          <label>除外フォルダ</label>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:1rem;align-items:start;">
-            <div>
-              <p class="muted" style="margin:0 0 0.4rem;font-size:0.8rem;">設定中の除外フォルダ一覧:</p>
-              <div id="timeshift-exclude-list" style="max-height:180px;overflow-y:auto;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);min-height:3.5rem;">
-                <p class="muted" style="font-size:0.85rem;margin:0;">読み込み中...</p>
-              </div>
-            </div>
-            <div>
-              <p class="muted" style="margin:0 0 0.4rem;font-size:0.8rem;">除外パスの追加:</p>
-              <div style="display:flex;gap:0.5rem;align-items:center;">
-                <input type="text" id="timeshift-new-exclude" style="flex:1;min-width:0;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text);font-family:monospace;font-size:0.85rem;" placeholder="/home/user/Downloads/**" onkeydown="if(event.key==='Enter'){event.preventDefault();addTimeshiftExclude();}">
-                <button type="button" class="btn btn-primary" id="btn-timeshift-add-exclude" onclick="addTimeshiftExclude()" style="white-space:nowrap;padding:0.5rem 0.9rem;font-size:0.85rem;">追加</button>
-              </div>
-              <div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.5rem;align-items:center;">
-                <span class="muted" style="font-size:0.75rem;">テンプレート:</span>
-                <button type="button" class="btn btn-secondary" onclick="addTimeshiftExcludePath('/opt/lxd-pool/**')" title="LXD コンテナのストレージを除外" style="padding:0.25rem 0.6rem;font-size:0.75rem;font-family:monospace;">/opt/lxd-pool/**</button>
-                <button type="button" class="btn btn-secondary" onclick="addTimeshiftExcludePath('/vm')" title="仮想マシンのディスクイメージを除外" style="padding:0.25rem 0.6rem;font-size:0.75rem;font-family:monospace;">/vm</button>
-                <button type="button" class="btn btn-secondary" onclick="addTimeshiftExcludePath('/root/.cache/**')" title="root のキャッシュを除外" style="padding:0.25rem 0.6rem;font-size:0.75rem;font-family:monospace;">/root/.cache/**</button>
-              </div>
-              <p class="muted" style="margin:0.4rem 0 0;font-size:0.75rem;">※ 「/パス/**」のように指定するとフォルダ配下全体が除外されます</p>
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.75rem;">
-          <button class="btn btn-primary" id="btn-timeshift-save-excludes" onclick="saveTimeshiftExcludes()" disabled>
-            除外設定を保存
-          </button>
-          <button class="btn btn-success" id="btn-timeshift-create" onclick="createSnapshot()" disabled>
-            スナップショット作成
-          </button>
-        </div>
-      </div>
-
-      <h2>スナップショット一覧</h2>
-      <div class="stat-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-          <p class="muted" style="margin:0;">作成済みのスナップショットの一覧です。</p>
-          <button class="btn btn-secondary" id="btn-timeshift-refresh" onclick="loadTimeshiftSnapshots()" disabled style="font-size:0.8rem;padding:0.3rem 0.7rem;">
-            更新
-          </button>
-        </div>
-        <div id="timeshift-snapshot-list">
-          <p class="muted">読み込み中...</p>
-        </div>
-      </div>
-
-      <h2>スケジュール</h2>
-      <div class="stat-card">
-        <p class="muted" style="margin-bottom:0.75rem;">スナップショットの頻度を選択</p>
-        <div id="timeshift-schedule-rows" style="display:flex;flex-direction:column;gap:0.4rem;max-width:420px;">
-          <p class="muted">読み込み中...</p>
-        </div>
-        <label style="display:flex;align-items:center;gap:0.45rem;margin:0.75rem 0 0;cursor:pointer;font-size:0.9rem;">
-          <input type="checkbox" id="ts-cron-no-email" onchange="markTimeshiftScheduleDirty()">
-          cron に定期タスクのメールを送信しない
-        </label>
-        <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.5rem;">
-          <button class="btn btn-primary" id="btn-timeshift-save-schedule" onclick="saveTimeshiftSchedule()" disabled>
-            スケジュールを保存
-          </button>
-          <span class="muted" id="timeshift-schedule-note" style="font-size:0.75rem;"></span>
-        </div>
-      </div>
-    </section>
-
     <!-- Apps / Settings -->
     <section id="tab-apps" class="tab-content">
       <h1>アプリ/設定</h1>
@@ -701,33 +584,9 @@
       </div>
 
       <h2>設定</h2>
-      <div class="stat-card" style="margin-bottom:1rem;">
-        <div style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.45rem 0;">
-          <div style="flex:1;">
-            <div style="display:flex;align-items:center;gap:0.5rem;">
-              <span style="font-weight:600;">ノートPCで画面を閉じてもスリープしない</span>
-              <span id="lid-switch-badge"><span class="badge badge-other">確認中...</span></span>
-            </div>
-            <div class="muted" style="font-size:0.78rem;">デスクトップ環境なしでサーバー運用するノートPC向け (systemd-logind の蓋閉じ動作を ignore に設定)。</div>
-            <div class="muted" id="lid-switch-detail" style="font-size:0.78rem;"></div>
-          </div>
-        </div>
-        <div id="lid-switch-status" class="status-msg"></div>
-        <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;">
-          <button class="btn btn-secondary" id="btn-lid-switch-disable" onclick="setLidSwitch(false)">無効</button>
-          <button class="btn btn-primary" id="btn-lid-switch-enable" onclick="setLidSwitch(true)">有効</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- serv-UI Fleet (Bulk Management) -->
-    <section id="tab-fleet" class="tab-content">
-      <h1>serv-UI一括管理ページ</h1>
-      <div id="fleet-status-msg" class="status-msg"></div>
-
-      <h2>ピン留め</h2>
+            <h2>ピン留め</h2>
       <div id="fleet-pinned-container">
-        <p class="muted">ピン留めされたserv-UIはありません。下の「serv-UI自動検出」で検出したサーバーをピン留めすると、ここに固定表示されます。</p>
+        <p class="muted">ピン留めされたantix-UIはありません。下の「antix-UI自動検出」で検出したサーバーをピン留めすると、ここに固定表示されます。</p>
       </div>
 
       <h2>更新設定</h2>
@@ -751,19 +610,19 @@
             </select>
           </div>
         </div>
-        <p class="muted" style="font-size:0.72rem;margin-top:0.6rem;margin-bottom:0;">ピン留めされたserv-UIの状態を指定した間隔で自動更新します。設定はこのブラウザに保存されます。</p>
+        <p class="muted" style="font-size:0.72rem;margin-top:0.6rem;margin-bottom:0;">ピン留めされたantix-UIの状態を指定した間隔で自動更新します。設定はこのブラウザに保存されます。</p>
       </div>
 
-      <h2>serv-UI自動検出</h2>
+      <h2>antix-UI自動検出</h2>
       <div class="stat-card" style="margin-bottom:1rem;">
-        <p class="muted" style="margin-bottom:0.75rem;">Tailnet内で稼働中のserv-UIを検出し、一覧表示します。ホスト名をクリックすると、そのserv-UIを新しいタブで開きます。</p>
+        <p class="muted" style="margin-bottom:0.75rem;">Tailnet内で稼働中のantix-UIを検出し、一覧表示します。ホスト名をクリックすると、そのantix-UIを新しいタブで開きます。</p>
         <button class="btn btn-primary" id="btn-fleet-detect" onclick="detectFleet()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          serv-UI自動検出
+          antix-UI自動検出
         </button>
       </div>
       <div id="fleet-detect-container">
-        <p class="muted">「serv-UI自動検出」ボタンをクリックしてTailnet内のserv-UIを検索してください。</p>
+        <p class="muted">「antix-UI自動検出」ボタンをクリックしてTailnet内のantix-UIを検索してください。</p>
       </div>
     </section>
   </main>

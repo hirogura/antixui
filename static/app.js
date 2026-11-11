@@ -1,4 +1,4 @@
-/* serv-UI - Frontend Logic */
+/* antix-UI - Frontend Logic */
 
 let currentTab = 'dashboard';
 let term = null;
@@ -46,8 +46,6 @@ function switchTab(tab) {
     loadGrub();
   } else if (tab === 'backup') {
     loadBackupPage();
-  } else if (tab === 'timeshift') {
-    loadTimeshiftPage();
   } else if (tab === 'apps') {
     loadAppsPage();
   } else if (tab === 'fleet') {
@@ -61,13 +59,13 @@ function refreshCurrentTab() {
 
 async function restartServUI(auto = false) {
   // auto=true の場合は確認ダイアログを出さずに再起動する (アップデート完了後の自動連携用)
-  if (!auto && !confirm('serv-UIを再起動しますか？')) return false;
+  if (!auto && !confirm('antix-UIを再起動しますか？')) return false;
   try {
     const resp = await fetch('/api/servui/restart', { method: 'POST' });
     const data = await resp.json();
     if (data.success) {
       if (!auto) {
-        showStatus('serv-UIを再起動しました。3秒後にページを更新します。', 'success');
+        showStatus('antix-UIを再起動しました。3秒後にページを更新します。', 'success');
         setTimeout(() => location.reload(), 3000);
       }
       return true;
@@ -100,20 +98,20 @@ async function waitForServUI(timeoutMs = 60000) {
 
 // アップデート完了後の自動連携: 再起動 → リフレッシュ → リロード
 async function autoRestartAndRefreshAfterUpdate() {
-  showStatus('アップデート完了！自動で「serv-UI再起動」を実行します...', 'success');
+  showStatus('アップデート完了！自動で「antix-UI再起動」を実行します...', 'success');
   const ok = await restartServUI(true);
   if (!ok) {
-    showStatus('自動再起動に失敗しました。サイドバーの「serv-UI再起動」を手動で実行してください', 'error');
+    showStatus('自動再起動に失敗しました。サイドバーの「antix-UI再起動」を手動で実行してください', 'error');
     return;
   }
-  showStatus('serv-UIを再起動中...復旧後に自動でリフレッシュします', 'info');
+  showStatus('antix-UIを再起動中...復旧後に自動でリフレッシュします', 'info');
   const back = await waitForServUI(60000);
   if (!back) {
     showStatus('再起動コマンドを送信しました。ページを手動で更新してください', 'info');
     setTimeout(() => location.reload(), 2000);
     return;
   }
-  showStatus('再起動完了！自動で「serv-UIリフレッシュ」を実行します', 'success');
+  showStatus('再起動完了！自動で「antix-UIリフレッシュ」を実行します', 'success');
   try {
     refreshCurrentTab();
   } catch (e) {
@@ -124,7 +122,7 @@ async function autoRestartAndRefreshAfterUpdate() {
 }
 
 async function rebootSystem() {
-  if (!confirm('PC（サーバー本体）を再起動しますか？\n再起動中はサーバーおよびserv-UIへの接続が一時的に切断されます。')) return;
+  if (!confirm('PC（サーバー本体）を再起動しますか？\n再起動中はサーバーおよびantix-UIへの接続が一時的に切断されます。')) return;
   try {
     const resp = await fetch('/api/system/reboot', { method: 'POST' });
     const data = await resp.json();
@@ -138,11 +136,11 @@ async function rebootSystem() {
   }
 }
 
-// ===== serv-UI update =====
+// ===== antix-UI update =====
 let servuiUpdateState = null; // { t, phase }
 
 async function updateServUI() {
-  if (!confirm('serv-UIを更新しますか？\nGitHubから最新版を取得してセットアップします。\n\n・完了まで数分かかる場合があります\n・完了後は自動で「serv-UI再起動」→「serv-UIリフレッシュ」を実行します')) return;
+  if (!confirm('antix-UIを更新しますか？\nGitHubから最新版を取得してセットアップします。\n\n・完了まで数分かかる場合があります\n・完了後は自動で「antix-UI再起動」→「antix-UIリフレッシュ」を実行します')) return;
 
   showStatus('アップデートを開始しています...', 'info');
   try {
@@ -197,7 +195,7 @@ function pollServuiUpdate() {
 }
 
 async function shutdownSystem() {
-  if (!confirm('PC（サーバー本体）をシャットダウンしますか？\nシャットダウン後はサーバーの電源が切れ、serv-UIにアクセスできなくなります。')) return;
+  if (!confirm('PC（サーバー本体）をシャットダウンしますか？\nシャットダウン後はサーバーの電源が切れ、antix-UIにアクセスできなくなります。')) return;
   try {
     const resp = await fetch('/api/system/shutdown', { method: 'POST' });
     const data = await resp.json();
@@ -318,7 +316,7 @@ async function scanPorts() {
       showStatus(`検出時に問題が発生しました: ${data.error}`, 'error');
     } else if (!resp.ok || !Array.isArray(data.ports)) {
       document.getElementById('ports-list-container').innerHTML =
-        `<p class="muted">応答が不正です (HTTP ${resp.status})。serv-UIの再起動が必要な可能性があります。</p>`;
+        `<p class="muted">応答が不正です (HTTP ${resp.status})。antix-UIの再起動が必要な可能性があります。</p>`;
     }
   } catch (e) {
     container.innerHTML = `<p class="muted">エラー: ${escapeHtml(e.message)}</p>`;
@@ -1702,12 +1700,12 @@ async function openSelfEx() {
     return;
   }
 
-  // 旧serv-UI（本API未搭載）で稼働中の場合は404になる。
+  // 旧antix-UI（本API未搭載）で稼働中の場合は404になる。
   // そのままでは data.installed が undefined で「未インストール」扱いになり
   // 誤ってインストール誘導してしまうため、再起動案内に留めて抜ける。
   if (!resp.ok) {
     if (resp.status === 404) {
-      showStatus('selfEx連携にはserv-UIの再起動が必要です。サイドバーの「serv-UI再起動」を押してから再度お試しください。', 'error');
+      showStatus('selfEx連携にはantix-UIの再起動が必要です。サイドバーの「antix-UI再起動」を押してから再度お試しください。', 'error');
     } else {
       showStatus(`selfEx確認エラー: HTTP ${resp.status}`, 'error');
     }
@@ -1793,7 +1791,7 @@ async function openEasyLXD() {
       showStatus('Easy LXDをインストール中...', 'info');
       setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          const installCmd = 'curl -fsSL -o /tmp/install-easylxd1.sh https://raw.githubusercontent.com/hirogura/easylxd/main/install-easylxd1.sh && chmod +x /tmp/install-easylxd1.sh && sudo /tmp/install-easylxd1.sh\n';
+          const installCmd = 'cp /opt/antix-ui/antix/easylxd/install-easylxd1.sh /tmp/install-easylxd1.sh && chmod +x /tmp/install-easylxd1.sh && sudo /tmp/install-easylxd1.sh\n';
           ws.send(JSON.stringify({ type: 'input', data: installCmd }));
         } else {
           showStatus('ターミナルに接続できません', 'error');
@@ -1841,12 +1839,12 @@ async function openDiskManager() {
     return;
   }
 
-  // 旧serv-UI（本API未搭載）で稼働中の場合は404になる。
+  // 旧antix-UI（本API未搭載）で稼働中の場合は404になる。
   // そのままでは data.installed が undefined で「未インストール」扱いになり
   // 誤ってインストール誘導してしまうため、再起動案内に留めて抜ける。
   if (!resp.ok) {
     if (resp.status === 404) {
-      showStatus('Disk Manager連携にはserv-UIの再起動が必要です。サイドバーの「serv-UI再起動」を押してから再度お試しください。', 'error');
+      showStatus('Disk Manager連携にはantix-UIの再起動が必要です。サイドバーの「antix-UI再起動」を押してから再度お試しください。', 'error');
     } else {
       showStatus(`Disk Manager確認エラー: HTTP ${resp.status}`, 'error');
     }
@@ -2233,405 +2231,6 @@ async function runRestore() {
     `復元を開始しますか？\n\n復元元パーティション: ${device}\nバックアップイメージ: ${image}\n\n⚠️ 現在のシステムは選択したバックアップの内容で上書きされます\n⚠️ GRUBエントリを作成して自動的に再起動し、Clonezilla Live が復元を行います\n⚠️ 処理中に電源を切らないでください`);
 }
 
-// --- Timeshift ---
-let timeshiftStatusData = null;
-let timeshiftExcludes = [];
-let timeshiftExcludesDirty = false;
-let tsExcludeLoadSeq = 0;
-let timeshiftMode = 'rsync';
-let timeshiftSchedule = null;
-let timeshiftScheduleDirty = false;
-
-const TS_SCHEDULE_TYPES = ['monthly', 'weekly', 'daily', 'hourly', 'boot'];
-const TS_SCHEDULE_LABELS = { monthly: '毎月', weekly: '毎週', daily: '毎日', hourly: '毎時', boot: '起動後' };
-
-function applyTimeshiftModeUi() {
-  const rsyncEl = document.getElementById('ts-mode-rsync');
-  const btrfsEl = document.getElementById('ts-mode-btrfs');
-  const noteEl = document.getElementById('ts-mode-note');
-  if (!rsyncEl || !btrfsEl) return;
-  const installed = !!(timeshiftStatusData && timeshiftStatusData.installed);
-  const btrfsOk = !!(timeshiftStatusData && timeshiftStatusData.btrfs_available);
-  rsyncEl.disabled = !installed;
-  btrfsEl.disabled = !installed || !btrfsOk;
-  if (timeshiftStatusData && timeshiftStatusData.configured_mode === 'btrfs' && btrfsOk) {
-    timeshiftMode = 'btrfs';
-  } else {
-    timeshiftMode = 'rsync';
-  }
-  rsyncEl.checked = timeshiftMode === 'rsync';
-  btrfsEl.checked = timeshiftMode === 'btrfs';
-  if (noteEl) {
-    noteEl.textContent = installed
-      ? (btrfsOk ? '' : '※ ルートファイルシステムが btrfs ではないため btrfs モードは使用できません')
-      : '';
-  }
-}
-
-async function setTimeshiftMode(mode) {
-  const prev = timeshiftMode;
-  const rsyncEl = document.getElementById('ts-mode-rsync');
-  const btrfsEl = document.getElementById('ts-mode-btrfs');
-  try {
-    const resp = await fetch('/api/timeshift/mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    });
-    const data = await resp.json();
-    if (!data.success) {
-      showTimeshiftStatus(data.message || 'スナップショット形式の変更に失敗しました', 'error');
-      if (rsyncEl) rsyncEl.checked = prev === 'rsync';
-      if (btrfsEl) btrfsEl.checked = prev === 'btrfs';
-      return;
-    }
-    timeshiftMode = mode;
-    if (timeshiftStatusData) timeshiftStatusData.configured_mode = mode;
-    showTimeshiftStatus(`スナップショット形式を ${mode} に設定しました`, 'success');
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-    if (rsyncEl) rsyncEl.checked = prev === 'rsync';
-    if (btrfsEl) btrfsEl.checked = prev === 'btrfs';
-  }
-}
-
-async function loadTimeshiftPage() {
-  loadTimeshiftStatus();
-  timeshiftExcludesDirty = false;
-  loadTimeshiftSnapshots();
-}
-
-async function loadTimeshiftStatus() {
-  const envEl = document.getElementById('timeshift-env-status');
-  const installBtn = document.getElementById('btn-timeshift-install');
-  const createBtn = document.getElementById('btn-timeshift-create');
-  const saveBtn = document.getElementById('btn-timeshift-save-excludes');
-  const refreshBtn = document.getElementById('btn-timeshift-refresh');
-  const scheduleBtn = document.getElementById('btn-timeshift-save-schedule');
-  try {
-    const resp = await fetch('/api/timeshift/status');
-    timeshiftStatusData = await resp.json();
-    if (timeshiftStatusData.installed) {
-      const modeLabel = timeshiftStatusData.mode === 'btrfs' ? 'btrfs モード' : timeshiftStatusData.mode === 'rsync' ? 'rsync モード' : '不明';
-      envEl.innerHTML = `<span class="text-success">✔ インストール済み</span> <span class="muted">(${escapeHtml(modeLabel)})</span>`;
-      installBtn.style.display = 'none';
-      createBtn.disabled = false;
-      saveBtn.disabled = false;
-      refreshBtn.disabled = false;
-      if (scheduleBtn) scheduleBtn.disabled = false;
-    } else {
-      envEl.innerHTML = `<span class="text-danger">未インストール</span>`;
-      installBtn.disabled = false;
-      installBtn.style.display = '';
-      createBtn.disabled = true;
-      saveBtn.disabled = true;
-      refreshBtn.disabled = true;
-      if (scheduleBtn) scheduleBtn.disabled = true;
-    }
-    applyTimeshiftModeUi();
-  } catch (e) {
-    envEl.innerHTML = `<span class="text-danger">状態の取得に失敗しました: ${escapeHtml(e.message)}</span>`;
-  }
-}
-
-async function installTimeshift() {
-  const btn = document.getElementById('btn-timeshift-install');
-  if (!confirm('Timeshift のインストールを開始しますか？')) return;
-  btn.disabled = true;
-  const cmd = 'sudo apt update && sudo apt install -y timeshift';
-  await sendToTerminal(cmd, 'Timeshift をインストール中...');
-}
-
-function renderTimeshiftExcludes() {
-  const container = document.getElementById('timeshift-exclude-list');
-  if (!container) return;
-  if (!timeshiftExcludes || timeshiftExcludes.length === 0) {
-    container.innerHTML = '<p class="muted" style="font-size:0.85rem;margin:0.25rem 0;">除外フォルダはありません（すべてのファイルが対象）</p>';
-    return;
-  }
-  let html = '<div style="display:flex;flex-direction:column;gap:0.35rem;">';
-  timeshiftExcludes.forEach((path, idx) => {
-    html += `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;background:var(--bg-elevated, #1f2128);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.55rem;font-family:monospace;font-size:0.83rem;">
-        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(path)}">${escapeHtml(path)}</span>
-        <button type="button" class="btn btn-danger btn-sm" onclick="removeTimeshiftExclude(${idx})" title="除外を解除" style="padding:0.1rem 0.45rem;font-size:0.85rem;line-height:1.2;flex-shrink:0;">－</button>
-      </div>`;
-  });
-  html += '</div>';
-  container.innerHTML = html;
-}
-
-function addTimeshiftExclude() {
-  const input = document.getElementById('timeshift-new-exclude');
-  if (!input) return;
-  const path = input.value.trim();
-  if (!path) return;
-  if (timeshiftExcludes.includes(path)) {
-    showTimeshiftStatus('そのパスは既に除外リストに含まれています', 'error');
-    return;
-  }
-  timeshiftExcludes.push(path);
-  timeshiftExcludesDirty = true;
-  input.value = '';
-  renderTimeshiftExcludes();
-}
-
-function addTimeshiftExcludePath(path) {
-  path = (path || '').trim();
-  if (!path) return;
-  if (timeshiftExcludes.includes(path)) {
-    showTimeshiftStatus('そのパスは既に除外リストに含まれています', 'error');
-    return;
-  }
-  timeshiftExcludes.push(path);
-  timeshiftExcludesDirty = true;
-  renderTimeshiftExcludes();
-}
-
-function removeTimeshiftExclude(idx) {
-  if (idx >= 0 && idx < timeshiftExcludes.length) {
-    timeshiftExcludes.splice(idx, 1);
-    timeshiftExcludesDirty = true;
-    renderTimeshiftExcludes();
-  }
-}
-
-async function saveTimeshiftExcludes() {
-  const btn = document.getElementById('btn-timeshift-save-excludes');
-  btn.disabled = true;
-  btn.textContent = '保存中...';
-  try {
-    const resp = await fetch('/api/timeshift/excludes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ excludes: timeshiftExcludes }),
-    });
-    const data = await resp.json();
-    if (data.success) {
-      timeshiftExcludesDirty = false;
-      showTimeshiftStatus('除外設定を保存しました', 'success');
-      loadTimeshiftSnapshots();
-    } else {
-      showTimeshiftStatus(data.message || '除外設定の保存に失敗しました', 'error');
-    }
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '除外設定を保存';
-  }
-}
-
-function renderTimeshiftSchedule() {
-  const container = document.getElementById('timeshift-schedule-rows');
-  const emailEl = document.getElementById('ts-cron-no-email');
-  if (!container || !timeshiftSchedule) return;
-  let html = '';
-  for (const t of TS_SCHEDULE_TYPES) {
-    const s = timeshiftSchedule[t];
-    html += `
-      <div style="display:flex;align-items:center;gap:0.75rem;">
-        <label style="display:flex;align-items:center;gap:0.45rem;margin:0;width:6rem;cursor:pointer;font-size:0.9rem;">
-          <input type="checkbox" id="ts-sched-${t}" ${s.enabled ? 'checked' : ''} onchange="onTimeshiftScheduleToggle('${t}')">
-          ${TS_SCHEDULE_LABELS[t]}
-        </label>
-        <span style="font-size:0.9rem;">保持数</span>
-        <span id="ts-keep-${t}" style="min-width:2.5rem;text-align:center;font-family:monospace;font-size:0.9rem;">${s.keep}</span>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="changeTimeshiftKeep('${t}', -1)" style="padding:0.1rem 0.55rem;">－</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="changeTimeshiftKeep('${t}', 1)" style="padding:0.1rem 0.55rem;">＋</button>
-      </div>`;
-  }
-  container.innerHTML = html;
-  if (emailEl) emailEl.checked = !!timeshiftSchedule.stop_cron_emails;
-  timeshiftScheduleDirty = false;
-  updateTimeshiftScheduleNote();
-}
-
-function onTimeshiftScheduleToggle(type) {
-  const el = document.getElementById(`ts-sched-${type}`);
-  if (timeshiftSchedule && el) timeshiftSchedule[type].enabled = el.checked;
-  markTimeshiftScheduleDirty();
-}
-
-function changeTimeshiftKeep(type, delta) {
-  if (!timeshiftSchedule) return;
-  const s = timeshiftSchedule[type];
-  s.keep = Math.min(99, Math.max(1, s.keep + delta));
-  const el = document.getElementById(`ts-keep-${type}`);
-  if (el) el.textContent = s.keep;
-  markTimeshiftScheduleDirty();
-}
-
-function markTimeshiftScheduleDirty() {
-  timeshiftScheduleDirty = true;
-  updateTimeshiftScheduleNote();
-}
-
-function updateTimeshiftScheduleNote() {
-  const note = document.getElementById('timeshift-schedule-note');
-  if (note) note.textContent = timeshiftScheduleDirty ? '未保存の変更があります' : '';
-}
-
-async function saveTimeshiftSchedule() {
-  const btn = document.getElementById('btn-timeshift-save-schedule');
-  if (!timeshiftSchedule) return;
-  const emailEl = document.getElementById('ts-cron-no-email');
-  const payload = {
-    schedule: TS_SCHEDULE_TYPES.reduce((acc, t) => {
-      acc[t] = { enabled: !!timeshiftSchedule[t].enabled, keep: timeshiftSchedule[t].keep };
-      return acc;
-    }, {}),
-    stop_cron_emails: emailEl ? emailEl.checked : true,
-  };
-  btn.disabled = true;
-  try {
-    const resp = await fetch('/api/timeshift/schedule', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
-    if (data.success) {
-      if (data.schedule) {
-        timeshiftSchedule = {
-          stop_cron_emails: !!data.schedule.stop_cron_emails,
-          ...timeshiftSchedule,
-          ...TS_SCHEDULE_TYPES.reduce((acc, t) => {
-            acc[t] = data.schedule[t] || timeshiftSchedule[t];
-            return acc;
-          }, {}),
-        };
-      }
-      showTimeshiftStatus(data.message || 'スケジュールを保存しました', 'success');
-      renderTimeshiftSchedule();
-    } else {
-      showTimeshiftStatus(data.message || 'スケジュールの保存に失敗しました', 'error');
-      markTimeshiftScheduleDirty();
-    }
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-    markTimeshiftScheduleDirty();
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function loadTimeshiftSnapshots() {
-  const seq = ++tsExcludeLoadSeq;
-  const listEl = document.getElementById('timeshift-snapshot-list');
-  listEl.innerHTML = '<p class="muted"><span class="spinner"></span> 読み込み中...</p>';
-  try {
-    const resp = await fetch('/api/timeshift/snapshots');
-    const data = await resp.json();
-    if (seq !== tsExcludeLoadSeq) return;
-    const snaps = data.snapshots || [];
-    if (data.excludes && !timeshiftExcludesDirty) {
-      timeshiftExcludes = [...data.excludes];
-      renderTimeshiftExcludes();
-    }
-    if (data.schedule) {
-      if (!timeshiftSchedule || !timeshiftScheduleDirty) {
-        timeshiftSchedule = {
-          stop_cron_emails: !!data.schedule.stop_cron_emails,
-          ...TS_SCHEDULE_TYPES.reduce((acc, t) => {
-            acc[t] = { enabled: !!(data.schedule[t] && data.schedule[t].enabled), keep: Number(data.schedule[t]?.keep) || 0 };
-            return acc;
-          }, {}),
-        };
-        renderTimeshiftSchedule();
-      }
-    }
-    if (snaps.length === 0) {
-      listEl.innerHTML = '<p class="muted">スナップショットはありません。</p>';
-      return;
-    }
-    let html = '<table style="width:100%;border-collapse:collapse;font-size:0.9rem;">';
-    html += '<thead><tr style="border-bottom:1px solid var(--border);text-align:left;">';
-    html += '<th style="padding:0.5rem;">ID</th><th style="padding:0.5rem;">名前</th><th style="padding:0.5rem;">タグ</th><th style="padding:0.5rem;">説明</th><th style="padding:0.5rem;">容量</th><th style="padding:0.5rem;"></th></tr></thead><tbody>';
-    for (const s of snaps) {
-      html += `<tr style="border-bottom:1px solid var(--border);">`;
-      html += `<td style="padding:0.5rem;">${escapeHtml(String(s.id))}</td>`;
-      html += `<td style="padding:0.5rem;font-family:monospace;font-size:0.85rem;">${escapeHtml(s.name)}</td>`;
-      html += `<td style="padding:0.5rem;">${escapeHtml(s.tags)}</td>`;
-      html += `<td style="padding:0.5rem;">${escapeHtml(s.description)}</td>`;
-      html += `<td style="padding:0.5rem;white-space:nowrap;font-size:0.85rem;">${escapeHtml(s.size || '-')}</td>`;
-      html += `<td style="padding:0.5rem;"><button class="btn btn-primary" onclick="restoreSnapshot(${Number(s.id) || 0},'${escapeJs(s.name)}')" style="font-size:0.8rem;padding:0.25rem 0.6rem;">復元</button> <button class="btn btn-danger" onclick="deleteSnapshot(${Number(s.id) || 0},'${escapeJs(s.name)}')" style="font-size:0.8rem;padding:0.25rem 0.6rem;">削除</button></td>`;
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    listEl.innerHTML = html;
-  } catch (e) {
-    listEl.innerHTML = `<p class="text-danger">一覧の取得に失敗しました: ${escapeHtml(e.message)}</p>`;
-  }
-}
-
-async function createSnapshot() {
-  const comment = document.getElementById('timeshift-comment').value.trim();
-  if (!confirm('スナップショットを作成しますか？\n\nターミナルに切り替わって進捗を表示します')) return;
-  try {
-    const resp = await fetch('/api/timeshift/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment, excludes: timeshiftExcludes }),
-    });
-    const data = await resp.json();
-    if (!data.success) {
-      showTimeshiftStatus(data.message || 'スナップショット作成の開始に失敗しました', 'error');
-      return;
-    }
-    await sendToTerminal(data.cmd, data.message);
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-  }
-}
-
-async function restoreSnapshot(id, name) {
-  if (!confirm(`スナップショット ${id} (${name}) を復元しますか？\n\n⚠️ 現在のシステムは選択したスナップショットの状態に戻ります\n⚠️ 実行したあとは再起動してください`)) return;
-  try {
-    const resp = await fetch('/api/timeshift/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snapshot_id: id }),
-    });
-    const data = await resp.json();
-    if (!data.success) {
-      showTimeshiftStatus('復元コマンドの生成に失敗しました', 'error');
-      return;
-    }
-    await sendToTerminal(data.cmd, data.message);
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-  }
-}
-
-async function deleteSnapshot(id, name) {
-  if (!confirm(`スナップショット ${id} (${name}) を削除しますか？\n\n⚠️ この操作は取り消せません`)) return;
-  try {
-    const resp = await fetch('/api/timeshift/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snapshot_id: id }),
-    });
-    const data = await resp.json();
-    if (data.success) {
-      showTimeshiftStatus(data.message, 'success');
-      loadTimeshiftSnapshots();
-    } else {
-      showTimeshiftStatus(data.message || '削除に失敗しました', 'error');
-    }
-  } catch (e) {
-    showTimeshiftStatus(`エラー: ${e.message}`, 'error');
-  }
-}
-
-function showTimeshiftStatus(msg, type) {
-  const el = document.getElementById('timeshift-status-msg');
-  el.textContent = msg;
-  el.className = `status-msg show ${type}`;
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => { el.className = 'status-msg'; }, 6000);
-}
-
 // --- Apps / Settings ---
 const APPS_INSTALL_DEFS = [
   { key: 'chrome', label: 'Google Chrome', desc: '公式 .deb パッケージを取得してインストール' },
@@ -2646,7 +2245,6 @@ async function loadAppsPage() {
   await loadAppsStatus();
   await loadAppsShortcuts();
   await loadVentoyUI();
-  await loadLidSwitch();
   await loadBingWallpaper();
 }
 
@@ -2975,85 +2573,7 @@ async function openVentoyUI() {
   }
 }
 
-// --- 設定: ノートPCで画面を閉じてもスリープしない (systemd-logind) ---
-async function loadLidSwitch() {
-  const badgeEl = document.getElementById('lid-switch-badge');
-  const detailEl = document.getElementById('lid-switch-detail');
-  const statusEl = document.getElementById('lid-switch-status');
-  if (!badgeEl) return;
-  badgeEl.innerHTML = '<span class="badge badge-other">確認中...</span>';
-  if (detailEl) detailEl.textContent = '';
-  if (statusEl) { statusEl.className = 'status-msg'; statusEl.textContent = ''; }
-  try {
-    const resp = await fetch('/api/system/lid-switch');
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-    renderLidSwitch(data);
-  } catch (e) {
-    badgeEl.innerHTML = '<span class="badge badge-other">不明</span>';
-    if (statusEl) {
-      statusEl.className = 'status-msg show error';
-      statusEl.textContent = `状態取得エラー: ${e.message}`;
-    }
-  }
-}
-
-function renderLidSwitch(data) {
-  const badgeEl = document.getElementById('lid-switch-badge');
-  const detailEl = document.getElementById('lid-switch-detail');
-  if (!badgeEl) return;
-  badgeEl.innerHTML = data.enabled
-    ? '<span class="badge badge-active">有効</span>'
-    : '<span class="badge badge-other">無効</span>';
-  if (detailEl) detailEl.textContent = data.detail || '';
-}
-
-async function setLidSwitch(enable) {
-  const statusEl = document.getElementById('lid-switch-status');
-  const btnEnable = document.getElementById('btn-lid-switch-enable');
-  const btnDisable = document.getElementById('btn-lid-switch-disable');
-  if (!confirm(enable
-    ? '「ノートPCで画面を閉じてもスリープしない」を有効にしますか？\n蓋閉じ時の動作を ignore に設定し systemd-logind を再起動します。'
-    : '「ノートPCで画面を閉じてもスリープしない」を無効にしますか？\n蓋を閉じると通常通りスリープするよう戻します。')) return;
-  if (btnEnable) btnEnable.disabled = true;
-  if (btnDisable) btnDisable.disabled = true;
-  if (statusEl) {
-    statusEl.className = 'status-msg show info';
-    statusEl.innerHTML = '<span class="spinner"></span> 設定を適用中...';
-  }
-  try {
-    const resp = await fetch('/api/system/lid-switch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enable }),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-    if (data.success) {
-      if (statusEl) {
-        statusEl.className = 'status-msg show success';
-        statusEl.textContent = data.message || '設定を適用しました。';
-      }
-      renderLidSwitch(data);
-      showStatus(data.message || '設定を適用しました', 'success');
-    } else {
-      if (statusEl) {
-        statusEl.className = 'status-msg show error';
-        statusEl.textContent = data.message || '設定に失敗しました。';
-      }
-    }
-  } catch (e) {
-    if (statusEl) {
-      statusEl.className = 'status-msg show error';
-      statusEl.textContent = `エラー: ${e.message}`;
-    }
-  } finally {
-    if (btnEnable) btnEnable.disabled = false;
-    if (btnDisable) btnDisable.disabled = false;
-  }
-}
-
-// --- serv-UI Fleet (一括管理) ---
+// --- antix-UI Fleet (一括管理) ---
 let fleetNodes = [];
 let fleetDetectLoading = false;
 let fleetSettings = { intervalMs: 5000, pauseHidden: false };
@@ -3120,7 +2640,7 @@ async function loadFleetPins() {
 function renderFleetPinned(pins) {
   const container = document.getElementById('fleet-pinned-container');
   if (!pins.length) {
-    container.innerHTML = '<p class="muted">ピン留めされたserv-UIはありません。「serv-UI自動検出」で検出したサーバーをピン留めすると、ここに固定表示されます。</p>';
+    container.innerHTML = '<p class="muted">ピン留めされたantix-UIはありません。「antix-UI自動検出」で検出したサーバーをピン留めすると、ここに固定表示されます。</p>';
     return;
   }
   container.innerHTML = `<div class="stats-grid">${pins.map(n => renderFleetCard(n)).join('')}</div>`;
@@ -3140,7 +2660,7 @@ function renderFleetCard(n) {
       fleetMetricRow('メモリ使用率', inf.mem_percent, `${fmtGiB(inf.mem_used)} / ${fmtGiB(inf.mem_total)}`) +
       fleetMetricRow('ディスク使用量', inf.disk_percent, `${fmtGiB(inf.disk_used)} / ${fmtGiB(inf.disk_total)}`);
   } else {
-    body = '<div class="muted" style="font-size:0.78rem;padding:0.4rem 0;">serv-UIに接続できませんでした。</div>';
+    body = '<div class="muted" style="font-size:0.78rem;padding:0.4rem 0;">antix-UIに接続できませんでした。</div>';
   }
 
   return `
@@ -3182,14 +2702,14 @@ async function detectFleet() {
   const container = document.getElementById('fleet-detect-container');
   fleetDetectLoading = true;
   btn.disabled = true;
-  container.innerHTML = '<p class="muted"><span class="spinner"></span> Tailnet内のserv-UIを検出中... (ノード数によっては時間がかかります)</p>';
+  container.innerHTML = '<p class="muted"><span class="spinner"></span> Tailnet内のantix-UIを検出中... (ノード数によっては時間がかかります)</p>';
   try {
     const resp = await fetch('/api/fleet/detect', { cache: 'no-store' });
     const data = await resp.json();
     if (!resp.ok || data.success === false) throw new Error(data.error || `HTTP ${resp.status}`);
     fleetNodes = data.nodes || [];
     renderFleetDetect();
-    showStatus(`稼働中のserv-UIを${data.count}件検出しました`, data.count ? 'success' : 'info');
+    showStatus(`稼働中のantix-UIを${data.count}件検出しました`, data.count ? 'success' : 'info');
   } catch (e) {
     container.innerHTML = `<p class="muted text-danger">検出エラー: ${escapeHtml(e.message)}</p>`;
   } finally {
@@ -3201,7 +2721,7 @@ async function detectFleet() {
 function renderFleetDetect() {
   const container = document.getElementById('fleet-detect-container');
   if (!fleetNodes.length) {
-    container.innerHTML = '<p class="muted">Tailnet内に稼働中のserv-UIは見つかりませんでした。</p>';
+    container.innerHTML = '<p class="muted">Tailnet内に稼働中のantix-UIは見つかりませんでした。</p>';
     return;
   }
   const rows = fleetNodes.map((n, i) => {

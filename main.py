@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-serv-UI - Web-based Server Management Interface
+antix-UI - Web-based Server Management Interface
 A lightweight alternative to Webmin, designed to work with Tailscale serve.
 """
 
@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 IS_ROOT = os.getuid() == 0
 
-app = FastAPI(title="serv-UI", version="2.9.6")
+app = FastAPI(title="antix-UI", version="2.9.6")
 
 
 @app.middleware("http")
@@ -149,7 +149,7 @@ def get_primary_user() -> tuple[str, str, str]:
 
     # 2. Search for any UID >= 1000 user in /home
     for pw in pwd.getpwall():
-        if 1000 <= pw.pw_uid < 65534 and pw.pw_name != "servui":
+        if 1000 <= pw.pw_uid < 65534 and pw.pw_name != "antixui":
             if pw.pw_shell not in ("/bin/false", "/usr/sbin/nologin", "/bin/sync") and pw.pw_dir.startswith("/home/"):
                 return pw.pw_name, pw.pw_dir, pw.pw_shell or "/bin/bash"
 
@@ -1351,7 +1351,7 @@ async def disks_info():
 
 
 # ============================================================
-# 7. serv-UI Management & System Control
+# 7. antix-UI Management & System Control
 # ============================================================
 @app.get("/api/selfcode/status")
 async def selfcode_status():
@@ -1477,7 +1477,7 @@ def _parse_lsblk_partitions(stdout: str) -> list[dict]:
     """Parse `lsblk -P` output into partition dicts.
 
     Applies the same filter as the clonezilla helpers (TYPE="part",
-    excluding swap) so that menu indexes match between serv-UI and
+    excluding swap) so that menu indexes match between antix-UI and
     clonezilla-backup / clonezilla-restore.
     """
     parts = []
@@ -1940,544 +1940,6 @@ async def backup_run(req: Request):
     return {"success": True, "message": message, "label": label}
 
 
-# ---------------------------------------------------------------------------
-# Timeshift
-# ---------------------------------------------------------------------------
-
-@app.get("/api/timeshift/status")
-async def timeshift_status():
-    """Check Timeshift install state, its mode (rsync/btrfs) and btrfs usability."""
-    r = await run_cmd("which timeshift 2>/dev/null", timeout=5)
-    installed = r["returncode"] == 0
-
-    btrfs_available = False
-    fs_r = await run_cmd("findmnt -n -o FSTYPE /", timeout=5)
-    btrfs_available = fs_r["stdout"].strip().lower() == "btrfs"
-
-    mode = None
-    if installed:
-        mr = await run_cmd("timeshift --list 2>&1 | head -20", timeout=15)
-        txt = mr["stdout"].lower()
-        if "btrfs" in txt:
-            mode = "btrfs"
-        elif "rsync" in txt:
-            mode = "rsync"
-
-    configured_mode = None
-    try:
-        with open("/etc/timeshift/timeshift.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-        configured_mode = "btrfs" if cfg.get("btrfs_mode") == "true" else "rsync"
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    return {
-        "installed": installed,
-        "mode": mode,
-        "configured_mode": configured_mode,
-        "btrfs_available": btrfs_available,
-    }
-
-
-@app.post("/api/timeshift/mode")
-async def timeshift_set_mode(req: Request):
-    """Persist the snapshot mode (rsync/btrfs) in /etc/timeshift/timeshift.json."""
-    data = await _get_json(req)
-    mode = (data.get("mode") or "").strip()
-    if mode not in ("rsync", "btrfs"):
-        return {"success": False, "message": "不正な形式が指定されました"}
-
-    if mode == "btrfs":
-        fs_r = await run_cmd("findmnt -n -o FSTYPE /", timeout=5)
-        if fs_r["stdout"].strip().lower() != "btrfs":
-            return {"success": False, "message": "ルートファイルシステムが btrfs ではないため btrfs モードは選択できません"}
-
-    cfg_path = "/etc/timeshift/timeshift.json"
-    cfg: dict = {}
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    cfg["btrfs_mode"] = "true" if mode == "btrfs" else "false"
-    cfg.setdefault("do_first_run", "false")
-    cfg.setdefault("exclude", [])
-    cfg.setdefault("exclude-apps", [])
-    for k in ("schedule_monthly", "schedule_weekly", "schedule_daily", "schedule_hourly", "schedule_boot"):
-        cfg.setdefault(k, "false")
-    for k in ("count_monthly", "count_weekly", "count_daily", "count_hourly", "count_boot"):
-        cfg.setdefault(k, "2" if k == "count_monthly" else "5")
-
-    if not _write_file_root_safe(cfg_path, json.dumps(cfg, indent=2)):
-        return {"success": False, "message": "設定ファイルの書き出しに失敗しました（権限を確認してください）"}
-    return {"success": True, "mode": mode}
-
-
-@app.post("/api/timeshift/install")
-async def timeshift_install():
-    """Install Timeshift via apt."""
-    r = await run_cmd(_sudo("apt install -y timeshift"), timeout=120)
-    return {
-        "success": r["returncode"] == 0,
-        "stdout": r["stdout"],
-        "stderr": r["stderr"],
-    }
-
-
-def _get_timeshift_snapshot_size(name: str) -> str:
-    """Return formatted size string for a Timeshift snapshot."""
-    paths = [
-        f"/timeshift/snapshots/{name}/rsync-log",
-        f"/timeshift/snapshots-ondemand/{name}/rsync-log",
-        f"/timeshift/snapshots-boot/{name}/rsync-log",
-        f"/timeshift/snapshots-daily/{name}/rsync-log",
-        f"/timeshift/snapshots-hourly/{name}/rsync-log",
-        f"/timeshift/snapshots-weekly/{name}/rsync-log",
-        f"/timeshift/snapshots-monthly/{name}/rsync-log",
-    ]
-    paths.extend(glob.glob(f"/run/timeshift/*/backup/timeshift/snapshots/{name}/rsync-log"))
-    for p in paths:
-        if os.path.isfile(p):
-            try:
-                with open(p, "rb") as f:
-                    f.seek(max(0, f.seek(0, 2) - 4096))
-                    content = f.read().decode("utf-8", errors="replace")
-                m = re.search(r"Total file size:\s*([\d,]+)\s*bytes", content)
-                if not m:
-                    m = re.search(r"total size is\s*([\d,]+)", content)
-                if m:
-                    b = float(int(m.group(1).replace(",", "")))
-                    for unit in ["B", "KB", "MB", "GB", "TB"]:
-                        if b < 1024:
-                            return f"{b:.1f} {unit}" if unit != "B" else f"{int(b)} B"
-                        b /= 1024
-                    return f"{b:.1f} PB"
-            except Exception:
-                pass
-    return "-"
-
-
-def _write_file_root_safe(path: str, payload: str, mkdir_dir: str | None = None) -> bool:
-    """Write a file as the current user, falling back to sudo via a temp copy."""
-    try:
-        if mkdir_dir:
-            os.makedirs(mkdir_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(payload)
-        return True
-    except OSError:
-        pass
-    try:
-        fd, tmp = tempfile.mkstemp(prefix="servui_", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
-        cmd = f"cp '{tmp}' '{path}'"
-        if mkdir_dir:
-            cmd = f"mkdir -p '{mkdir_dir}' && {cmd}"
-        r = subprocess.run(_sudo(cmd), shell=True, capture_output=True, timeout=15)
-        os.unlink(tmp)
-        return r.returncode == 0
-    except Exception:
-        return False
-
-
-_SERVUI_TS_EXCLUDES_PATH = "/etc/servui/timeshift-excludes.json"
-
-
-def _read_servui_ts_excludes() -> list[str] | None:
-    """Read the serv-UI managed exclude list (source of truth for the UI)."""
-    try:
-        with open(_SERVUI_TS_EXCLUDES_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data.get("excludes"), list):
-            return [str(x) for x in data["excludes"] if str(x).strip()]
-    except (OSError, json.JSONDecodeError):
-        pass
-    return None
-
-
-def _write_servui_ts_excludes(excludes: list[str]) -> bool:
-    payload = json.dumps({"excludes": excludes}, indent=2)
-    return _write_file_root_safe(
-        _SERVUI_TS_EXCLUDES_PATH, payload, mkdir_dir=os.path.dirname(_SERVUI_TS_EXCLUDES_PATH)
-    )
-
-
-def _default_ts_excludes() -> list[str]:
-    """Build the default exclude list (home dirs, /root, non-root mounts)."""
-    default_excludes: list[str] = []
-    try:
-        for u in os.listdir("/home"):
-            if os.path.isdir(os.path.join("/home", u)) and not u.startswith("."):
-                default_excludes.append(f"/home/{u}/**")
-    except OSError:
-        pass
-    if not default_excludes:
-        default_excludes = ["/home/user/**"]
-    default_excludes.append("/root/**")
-    try:
-        root_src = subprocess.check_output(
-            "findmnt -n -o SOURCE /", shell=True, text=True, timeout=5
-        ).strip()
-        for line in subprocess.check_output(
-            "findmnt -n -o SOURCE,TARGET", shell=True, text=True, timeout=5
-        ).splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] != root_src and parts[0].startswith("/dev/"):
-                mp = parts[1].rstrip("/")
-                if mp and mp != "/":
-                    default_excludes.append(f"{mp}/**")
-    except Exception:
-        pass
-    return default_excludes
-
-
-_TS_SCHEDULE_TYPES = ("monthly", "weekly", "daily", "hourly", "boot")
-_TS_DEFAULT_COUNTS = {"monthly": 2, "weekly": 3, "daily": 5, "hourly": 6, "boot": 5}
-
-
-def _cfg_bool(value: object, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() == "true"
-    return default
-
-
-def _read_ts_schedule(cfg: dict) -> dict:
-    """Build the schedule view of a Timeshift config dict."""
-    schedule: dict = {
-        "stop_cron_emails": _cfg_bool(cfg.get("stop_cron_emails"), True),
-    }
-    for t in _TS_SCHEDULE_TYPES:
-        raw = cfg.get(f"count_{t}", _TS_DEFAULT_COUNTS[t])
-        try:
-            keep = int(raw)
-        except (TypeError, ValueError):
-            keep = _TS_DEFAULT_COUNTS[t]
-        schedule[t] = {
-            "enabled": _cfg_bool(cfg.get(f"schedule_{t}"), False),
-            "keep": keep,
-        }
-    return schedule
-
-
-def _ts_cron_content(line: str, stop_emails: bool) -> str:
-    sh = "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n"
-    if stop_emails:
-        sh += 'MAILTO=""\n'
-    return sh + "\n" + line + "\n"
-
-
-def _sync_ts_cron(schedule: dict) -> None:
-    """Sync /etc/cron.d/timeshift-* files with the configured schedule."""
-    scheduled = any(schedule[t]["enabled"] for t in _TS_SCHEDULE_TYPES)
-    stop = bool(schedule.get("stop_cron_emails", True))
-    hourly_path = "/etc/cron.d/timeshift-hourly"
-    boot_path = "/etc/cron.d/timeshift-boot"
-
-    def write_cron(path: str, line: str) -> None:
-        if _write_file_root_safe(path, _ts_cron_content(line, stop)):
-            subprocess.run(
-                _sudo(f"chown root:root '{path}' && chmod 644 '{path}'"),
-                shell=True, capture_output=True, timeout=15,
-            )
-
-    def remove_cron(path: str) -> None:
-        try:
-            os.remove(path)
-            return
-        except OSError:
-            pass
-        subprocess.run(_sudo(f"rm -f '{path}'"), shell=True, capture_output=True, timeout=15)
-
-    if scheduled:
-        write_cron(hourly_path, "0 * * * * root timeshift --check --scripted")
-    else:
-        remove_cron(hourly_path)
-
-    if schedule.get("boot", {}).get("enabled"):
-        write_cron(boot_path, "@reboot root sleep 10m && timeshift --create --scripted --tags B")
-    else:
-        remove_cron(boot_path)
-
-
-@app.get("/api/timeshift/snapshots")
-async def timeshift_snapshots():
-    """List existing Timeshift snapshots."""
-    r = await run_cmd("timeshift --list 2>&1", timeout=30)
-    if r["returncode"] != 0 and "no snapshots found" not in r["stdout"].lower():
-        raise HTTPException(status_code=500, detail=r["stderr"] or r["stdout"])
-
-    snapshots = []
-    for line in r["stdout"].splitlines():
-        m = re.match(r"^\s*(\d+)\s+>\s+(\S+)\s+(\S+)\s*(.*)", line)
-        if m:
-            s_name = m.group(2).strip()
-            snapshots.append({
-                "id": int(m.group(1)),
-                "name": s_name,
-                "tags": m.group(3).strip(),
-                "description": m.group(4).strip(),
-                "size": _get_timeshift_snapshot_size(s_name),
-            })
-
-    # Snapshot names are "YYYY-MM-DD_HH-MM-SS", so descending name order is
-    # newest first.
-    snapshots.sort(key=lambda s: s["name"], reverse=True)
-
-    # Read the currently configured exclude list from the Timeshift config.
-    excludes: list[str] = []
-    has_config = False
-    cfg = {}
-    try:
-        with open("/etc/timeshift/timeshift.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-            has_config = True
-            excludes = cfg.get("exclude", [])
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    if not has_config:
-        # First run: persist the defaults into the config file so that later
-        # edits made in the UI are kept instead of being overwritten on reload.
-        excludes = _default_ts_excludes()
-        cfg = {
-            "exclude": excludes,
-            "do_first_run": "false",
-            "btrfs_mode": "false",
-            "exclude-apps": [],
-        }
-        _write_file_root_safe(
-            "/etc/timeshift/timeshift.json", json.dumps(cfg, indent=2)
-        )
-        _write_servui_ts_excludes(excludes)
-    elif not excludes and cfg.get("do_first_run") == "true":
-        excludes = _default_ts_excludes()
-
-    servui_excludes = _read_servui_ts_excludes()
-    if servui_excludes is not None:
-        excludes = servui_excludes
-
-    return {"snapshots": snapshots, "excludes": excludes, "schedule": _read_ts_schedule(cfg)}
-
-
-@app.post("/api/timeshift/schedule")
-async def timeshift_save_schedule(req: Request):
-    """Save the snapshot schedule to /etc/timeshift/timeshift.json and sync cron."""
-    data = await _get_json(req)
-    sched = data.get("schedule")
-    stop_emails = data.get("stop_cron_emails")
-
-    cfg_path = "/etc/timeshift/timeshift.json"
-    cfg: dict = {}
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    if isinstance(sched, dict):
-        for t in _TS_SCHEDULE_TYPES:
-            item = sched.get(t)
-            if not isinstance(item, dict):
-                continue
-            cfg[f"schedule_{t}"] = "true" if bool(item.get("enabled")) else "false"
-            keep = item.get("keep")
-            if isinstance(keep, (int, float)) and 0 < keep <= 999:
-                cfg[f"count_{t}"] = int(keep)
-    if stop_emails is not None:
-        cfg["stop_cron_emails"] = "true" if bool(stop_emails) else "false"
-
-    schedule = _read_ts_schedule(cfg)
-    if not _write_file_root_safe(cfg_path, json.dumps(cfg, indent=2)):
-        return {"success": False, "message": "設定ファイルの書き出しに失敗しました（権限を確認してください）"}
-
-    _sync_ts_cron(schedule)
-
-    return {"success": True, "message": "スケジュールを保存しました", "schedule": schedule}
-
-
-@app.post("/api/timeshift/excludes")
-async def timeshift_save_excludes(req: Request):
-    """Save the exclude list to /etc/timeshift/timeshift.json."""
-    data = await _get_json(req)
-    excludes_raw = data.get("excludes")
-
-    excludes: list[str] = []
-    if isinstance(excludes_raw, list):
-        excludes = [str(x).strip() for x in excludes_raw if str(x).strip()]
-    elif isinstance(excludes_raw, str) and excludes_raw.strip():
-        excludes = [l.strip() for l in excludes_raw.splitlines() if l.strip()]
-
-    cfg_path = "/etc/timeshift/timeshift.json"
-    cfg: dict = {}
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    cfg["exclude"] = excludes
-    cfg.setdefault("do_first_run", "false")
-    cfg.setdefault("btrfs_mode", "false")
-    cfg.setdefault("exclude-apps", [])
-
-    if not _write_file_root_safe(cfg_path, json.dumps(cfg, indent=2)):
-        return {"success": False, "message": "設定ファイルの書き出しに失敗しました（権限を確認してください）"}
-    _write_servui_ts_excludes(excludes)
-
-    # Verify what actually landed on disk (external processes may rewrite it).
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            on_disk = json.load(f).get("exclude", [])
-        print(f"[timeshift-save] written={excludes} on_disk_after={on_disk}", flush=True)
-        if on_disk != excludes:
-            return {"success": False, "message": f"保存後に設定が他プロセスによって書き換えられました: {on_disk}"}
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    return {"success": True, "message": "除外設定を保存しました"}
-
-
-@app.post("/api/timeshift/create")
-async def timeshift_create(req: Request):
-    """Build the command to create a Timeshift snapshot (sent to terminal).
-
-    The exclude paths are written into /etc/timeshift/timeshift.json first
-    because the Timeshift CLI does not accept ``--exclude`` flags.
-    """
-    data = await _get_json(req)
-    comment = (data.get("comment") or "").strip()
-    excludes_raw = data.get("excludes")
-
-    excludes: list[str] = []
-    if isinstance(excludes_raw, list):
-        excludes = [str(x).strip() for x in excludes_raw if str(x).strip()]
-    elif isinstance(excludes_raw, str) and excludes_raw.strip():
-        excludes = [l.strip() for l in excludes_raw.splitlines() if l.strip()]
-
-    exclude_json = json.dumps(excludes)
-    print(f"[timeshift-create] excludes from client: {exclude_json}", flush=True)
-    _write_servui_ts_excludes(excludes)
-    safe_comment = comment.replace("'", "'\\''") if comment else ""
-    comment_arg = f" --comments '{safe_comment}'" if comment else ""
-
-    # Detect root device for config and stdin fallback.
-    r = await run_cmd("findmnt -n -o SOURCE /", timeout=5)
-    root_dev = _plain_block_dev(r["stdout"]) if r["returncode"] == 0 else ""
-    r_uuid = await run_cmd("findmnt -n -o UUID /", timeout=5)
-    root_uuid = r_uuid["stdout"].strip() if r_uuid["returncode"] == 0 else ""
-
-    script_body = (
-        "#!/usr/bin/env python3\n"
-        "import json, os\n"
-        "c = '/etc/timeshift/timeshift.json'\n"
-        "d = {}\n"
-        "if os.path.isfile(c):\n"
-        "    with open(c) as _f: d = json.load(_f)\n"
-        f"d['exclude'] = {exclude_json}\n"
-        "d['do_first_run'] = 'false'\n"
-        "d.setdefault('btrfs_mode', 'false')\n"
-        "d.setdefault('schedule_monthly', 'false')\n"
-        "d.setdefault('schedule_weekly', 'false')\n"
-        "d.setdefault('schedule_daily', 'false')\n"
-        "d.setdefault('schedule_hourly', 'false')\n"
-        "d.setdefault('schedule_boot', 'false')\n"
-        "d.setdefault('count_monthly', '2')\n"
-        "d.setdefault('count_weekly', '3')\n"
-        "d.setdefault('count_daily', '5')\n"
-        "d.setdefault('count_hourly', '6')\n"
-        "d.setdefault('count_boot', '5')\n"
-        "d.setdefault('exclude-apps', [])\n"
-        f"d['backup_device_uuid'] = '{root_uuid}'\n"
-        "with open(c, 'w') as _f: json.dump(d, _f, indent=2)\n"
-    )
-
-    # Write the helper script directly (no shell, no subprocess).
-    ts_script = f"/tmp/ts_update_{os.getpid()}.py"
-    try:
-        with open(ts_script, "w", encoding="utf-8") as f:
-            f.write(script_body)
-    except OSError as e:
-        return {"success": False, "message": f"ヘルパースクリプトの書き出しに失敗しました: {e}"}
-
-    # Pipe device name to stdin as fallback for the backup-device prompt
-    # (--yes only answers y/n questions, not the numbered device selector).
-    stdin_arg = f"echo '{root_dev}' |" if root_dev else ""
-    cmd = f"sudo python3 {ts_script} && {stdin_arg} sudo timeshift --create --yes{comment_arg}"
-
-    label = comment or "(コメントなし)"
-    return {"success": True, "cmd": cmd, "message": f"スナップショットを作成中: {label}"}
-
-
-@app.post("/api/timeshift/restore")
-async def timeshift_restore(req: Request):
-    """Build the command to restore a Timeshift snapshot (sent to terminal)."""
-    data = await _get_json(req)
-    snapshot_id = data.get("snapshot_id")
-    if snapshot_id is None:
-        raise HTTPException(status_code=400, detail="snapshot_id is required")
-
-    # Validate snapshot_id is a non-negative integer
-    try:
-        snapshot_id = int(snapshot_id)
-        if snapshot_id < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid snapshot_id")
-
-    snapshots_resp = await timeshift_snapshots()
-    snapshots = snapshots_resp["snapshots"]
-    target = next((s for s in snapshots if s["id"] == snapshot_id), None)
-    if target is None:
-        raise HTTPException(status_code=404, detail=f"スナップショット {snapshot_id} が見つかりません")
-
-    root_dev = ""
-    r = await run_cmd("findmnt -n -o SOURCE /", timeout=5)
-    if r["returncode"] == 0 and r["stdout"].strip():
-        # findmnt appends the btrfs subvolume (e.g. "/dev/vda3[/@]") and
-        # timeshift rejects it with "E: Device not found", so strip it.
-        root_dev = _plain_block_dev(r["stdout"])
-
-    target_arg = f" --target '{root_dev}'" if root_dev else ""
-    cmd = f"sudo timeshift --restore --snapshot '{target['name']}'{target_arg} --skip-grub --scripted --yes"
-    return {"success": True, "cmd": cmd, "message": f"スナップショット {snapshot_id} ({target['name']}) を復元します"}
-
-
-@app.post("/api/timeshift/delete")
-async def timeshift_delete(req: Request):
-    """Delete a Timeshift snapshot."""
-    data = await _get_json(req)
-    snapshot_id = data.get("snapshot_id")
-    if snapshot_id is None:
-        raise HTTPException(status_code=400, detail="snapshot_id is required")
-
-    try:
-        snapshot_id = int(snapshot_id)
-        if snapshot_id < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid snapshot_id")
-
-    snapshots_resp = await timeshift_snapshots()
-    snapshots = snapshots_resp["snapshots"]
-    target = next((s for s in snapshots if s["id"] == snapshot_id), None)
-    if target is None:
-        raise HTTPException(status_code=404, detail=f"スナップショット {snapshot_id} が見つかりません")
-
-    r = await run_cmd(
-        _sudo(f"timeshift --delete --snapshot '{target['name']}' --yes"),
-        timeout=300,
-    )
-    return {
-        "success": r["returncode"] == 0,
-        "message": f"スナップショット {snapshot_id} ({target['name']}) を削除しました" if r["returncode"] == 0 else f"削除に失敗しました: {r['stderr'] or r['stdout']}",
-    }
-
-
-# ============================================================
 # 8. アプリ/設定 (Cachy-UI の「アプリ/設定」ページを参考にした、apt 版)
 # ============================================================
 # Cachy-UI (https://github.com/hirogura/cachyos-cachyui.git) を参考に作成。
@@ -2906,17 +2368,23 @@ async def ventoyui_install():
     return {"success": True, "message": msg, "url": url, "output": detail}
 
 
-# --- 8.6 ノートPC 蓋閉じでもスリープしない設定 (systemd-logind) ---
-# デスクトップ環境なしでサーバー運用するノートPC向け。
-# /etc/systemd/logind.conf.d/ に drop-in を置き、蓋閉じ時の動作を ignore にする。
-LID_SWITCH_DROPIN = "/etc/systemd/logind.conf.d/99-servui-no-suspend-on-lid.conf"
-LID_SWITCH_CONTENT = (
-    "[Login]\n"
-    "HandleLidSwitch=ignore\n"
-    "HandleLidSwitchExternalPower=ignore\n"
-    "HandleLidSwitchDocked=ignore\n"
+# --- 8.6 ノートPC 蓋閉じでもスリープしない設定 (antiX: acpid) ---
+# antiX では systemd-logind が無いため acpid 経由で制御する。
+ACPI_SUPPORT_DEFAULT = "/etc/default/acpi-support"
+LID_ACPID_EVENT = "/etc/acpi/events/lidbtn-servui"
+LID_ACPID_SCRIPT = "/etc/acpi/lidbtn-servui.sh"
+LID_ACPID_EVENT_CONTENT = (
+    "event=button/lid.*\n"
+    f"action={LID_ACPID_SCRIPT} %e\n"
 )
-_LID_KEYS = ("HandleLidSwitch", "HandleLidSwitchExternalPower", "HandleLidSwitchDocked")
+LID_ACPID_SCRIPT_CONTENT = (
+    "#!/bin/sh\n"
+    "# antix-UI(antix-UI) による蓋閉じスリープ抑止 (acpid 用)\n"
+    "# 蓋を閉じてもスリープしない (何もしない)\n"
+    "exit 0\n"
+)
+_LID_KEYS = ("LID_SUSPEND", "SUSPEND_ON_LID_CLOSE")
+_LID_KEYS = ("LID_SUSPEND", "SUSPEND_ON_LID_CLOSE")
 
 
 def _parse_lid_value(text: str, key: str) -> str | None:
@@ -2934,42 +2402,37 @@ def _parse_lid_value(text: str, key: str) -> str | None:
 
 
 def _lid_switch_state() -> dict:
-    """現在の蓋閉じ設定を返す。enabled は本機能の drop-in が有効な場合 True。"""
+    """現在の蓋閉じ設定を返す。enabled は antiX(acpid) 用の抑止設定が有効な場合 True。"""
     values: dict = {}
-    dropin_text = ""
+    default_text = ""
     try:
-        with open(LID_SWITCH_DROPIN, encoding="utf-8", errors="replace") as f:
-            dropin_text = f.read()
+        with open(ACPI_SUPPORT_DEFAULT, encoding="utf-8", errors="replace") as f:
+            default_text = f.read()
     except OSError:
         pass
-    main_text = ""
-    try:
-        with open("/etc/systemd/logind.conf", encoding="utf-8", errors="replace") as f:
-            main_text = f.read()
-    except OSError:
-        pass
-    enabled = all(_parse_lid_value(dropin_text, k) == "ignore" for k in _LID_KEYS)
+    # acpid が antix-UI と同様の抑止ハンドラを持っているかで判定
+    handler_installed = (os.path.isfile(LID_ACPID_SCRIPT)
+                         and os.access(LID_ACPID_SCRIPT, os.X_OK))
     for k in _LID_KEYS:
-        v = _parse_lid_value(dropin_text, k) or _parse_lid_value(main_text, k)
-        values[k] = v or "未設定 (既定: suspend)"
+        v = _parse_lid_value(default_text, k)
+        values[k] = v or "未設定"
+    enabled = handler_installed
     if enabled:
-        detail = "有効 (蓋を閉じてもスリープしません)"
-    elif any(_parse_lid_value(dropin_text, k) is not None for k in _LID_KEYS):
-        detail = "一部のみ設定されています (再有効化推奨)"
+        detail = "有効 (antiX/acpid により蓋を閉じてもスリープしません)"
     else:
-        detail = "無効 (蓋を閉じるとスリープします)"
+        detail = "無効 (蓋を閉じると acpi-support 既定の動作に従います)"
     return {"enabled": enabled, "values": values, "detail": detail}
 
 
 @app.get("/api/system/lid-switch")
 async def lid_switch_status():
-    """蓋閉じスリープ抑止の状態を返す。"""
+    """蓋閉じスリープ抑止の状態を返す (antiX/acpid 版)。"""
     return _lid_switch_state()
 
 
 @app.post("/api/system/lid-switch")
 async def lid_switch_set(req: Request):
-    """蓋閉じスリープ抑止の有効/無効を切り替える。"""
+    """蓋閉じスリープ抑止の有効/無効を切り替える (antiX/acpid 版)。"""
     data = await _get_json(req)
     enable = data.get("enable", True)
     # 文字列 "false"/"0" 等も許容する
@@ -2978,23 +2441,25 @@ async def lid_switch_set(req: Request):
     enable = bool(enable)
     if enable:
         cmd = (
-            f"{_sudo('mkdir -p ' + shlex.quote(os.path.dirname(LID_SWITCH_DROPIN)))}"
-            f" && printf %s {shlex.quote(LID_SWITCH_CONTENT)} | {_sudo('tee ' + shlex.quote(LID_SWITCH_DROPIN))} >/dev/null"
-            f" && {_sudo('systemctl restart systemd-logind')}"
+            f"{_sudo('mkdir -p /etc/acpi/events')}"
+            f" && printf %s {shlex.quote(LID_ACPID_EVENT_CONTENT)} | {_sudo('tee ' + LID_ACPID_EVENT)} >/dev/null"
+            f" && printf %s {shlex.quote(LID_ACPID_SCRIPT_CONTENT)} | {_sudo('tee ' + LID_ACPID_SCRIPT)} >/dev/null"
+            f" && {_sudo('chmod 755 ' + LID_ACPID_SCRIPT)}"
+            f" && {_sudo('systemctl restart acpid')} || {_sudo('/etc/init.d/acpid restart')} || true"
         )
-        r = await run_cmd(cmd, timeout=60)
+        r = await run_cmd(cmd, timeout=30)
         if r["returncode"] != 0:
             return {"success": False,
                     "message": f"設定に失敗しました: {(r['stderr'] or r['stdout']).strip()[:500]}"}
         return {"success": True,
-                "message": "有効にしました。蓋を閉じてもスリープしません (systemd-logind を再起動済み)。",
+                "message": "有効にしました。antiX(acpid) で蓋閉じてもスリープしなくなります。",
                 **_lid_switch_state()}
     else:
         cmd = (
-            f"{_sudo('rm -f ' + shlex.quote(LID_SWITCH_DROPIN))}"
-            f" && {_sudo('systemctl restart systemd-logind')}"
+            f"{_sudo('rm -f ' + LID_ACPID_EVENT + ' ' + LID_ACPID_SCRIPT)}"
+            f" && {_sudo('systemctl restart acpid')} || {_sudo('/etc/init.d/acpid restart')} || true"
         )
-        r = await run_cmd(cmd, timeout=60)
+        r = await run_cmd(cmd, timeout=30)
         if r["returncode"] != 0:
             return {"success": False,
                     "message": f"無効化に失敗しました: {(r['stderr'] or r['stdout']).strip()[:500]}"}
@@ -3011,7 +2476,7 @@ BING_WP_REPO_SCRIPT = str(BASE_DIR / "bing-wallpaper.sh")
 BING_WP_SCRIPT = "/usr/local/bin/bing-wallpaper"
 BING_WP_CRON = "/etc/cron.d/bing-wallpaper"
 BING_WP_CRON_CONTENT = (
-    "# /etc/cron.d/bing-wallpaper -- serv-UI が管理しています (v.2.9.3)\n"
+    "# /etc/cron.d/bing-wallpaper -- antix-UI が管理しています (v.2.9.3)\n"
     "# 1日1回 Bing の今日の画像を取得し GNOME のデスクトップ壁紙に設定します\n"
     "SHELL=/bin/bash\n"
     "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n"
@@ -3148,33 +2613,33 @@ async def bing_wallpaper_run():
 
 @app.post("/api/servui/restart")
 async def restart_servui():
-    """Restart serv-UI service."""
+    """Restart antix-UI service."""
     async def do_restart():
         await asyncio.sleep(0.5)
-        await run_cmd(_sudo("systemctl restart servui"), timeout=15)
+        await run_cmd(_sudo("systemctl restart antixui"), timeout=15)
     asyncio.create_task(do_restart())
     return {"success": True, "stdout": "Restarting...", "errors": ""}
 
 
-# --- serv-UI self-update ---
+# --- antix-UI self-update ---
 if os.getuid() == 0:
-    SERVUI_UPDATE_LOG = "/var/log/servui-update.log"
-    SERVUI_UPDATE_PID = "/run/servui-update.pid"
+    ANTIXUI_UPDATE_LOG = "/var/log/antixui-update.log"
+    ANTIXUI_UPDATE_PID = "/run/antixui-update.pid"
 else:
-    SERVUI_UPDATE_LOG = f"/tmp/servui-update-{os.getuid()}.log"
-    SERVUI_UPDATE_PID = f"/tmp/servui-update-{os.getuid()}.pid"
+    ANTIXUI_UPDATE_LOG = f"/tmp/antixui-update-{os.getuid()}.log"
+    ANTIXUI_UPDATE_PID = f"/tmp/antixui-update-{os.getuid()}.pid"
 
 
 @app.post("/api/system/selfupdate")
 async def system_selfupdate():
-    """Start serv-UI self-update as a detached process.
+    """Start antix-UI self-update as a detached process.
 
     The updater runs independently of this server, so it always finishes
     even though the files being replaced belong to the running service.
     完了後はフロントエンドが自動で再起動→リフレッシュを実行する。
     """
     try:
-        with open(SERVUI_UPDATE_PID, encoding="utf-8") as f:
+        with open(ANTIXUI_UPDATE_PID, encoding="utf-8") as f:
             pid = int(f.read().strip())
         os.kill(pid, 0)
         return {"success": False, "message": "アップデートが既に実行中です"}
@@ -3187,15 +2652,15 @@ async def system_selfupdate():
 
     script = "\n".join([
         "set -e",
-        f"echo $$ > {SERVUI_UPDATE_PID}",
-        f"trap 'rm -f {SERVUI_UPDATE_PID}' EXIT",
-        f"exec > {SERVUI_UPDATE_LOG} 2>&1",
-        'echo "[serv-UI update] start $(date)"',
-        "rm -rf /tmp/servui-update",
-        "git clone --depth 1 https://github.com/hirogura/servui.git /tmp/servui-update",
-        "bash /tmp/servui-update/setup.sh --no-restart",
-        'echo "[serv-UI update] done $(date)"',
-        "echo __SERVUI_UPDATE_DONE__",
+        f"echo $$ > {ANTIXUI_UPDATE_PID}",
+        f"trap 'rm -f {ANTIXUI_UPDATE_PID}' EXIT",
+        f"exec > {ANTIXUI_UPDATE_LOG} 2>&1",
+        'echo "[antix-UI update] start $(date)"',
+        "rm -rf /tmp/antixui-update",
+        "git clone --depth 1 https://github.com/hirogura/antix-ui.git /tmp/antixui-update",
+        "bash /tmp/antixui-update/setup.sh --no-restart",
+        'echo "[antix-UI update] done $(date)"',
+        "echo __ANTIXUI_UPDATE_DONE__",
     ]) + "\n"
 
     await asyncio.create_subprocess_exec(
@@ -3213,7 +2678,7 @@ async def system_selfupdate_status():
     """Return current self-update progress (running flag + log tail)."""
     running = False
     try:
-        with open(SERVUI_UPDATE_PID, encoding="utf-8") as f:
+        with open(ANTIXUI_UPDATE_PID, encoding="utf-8") as f:
             pid = int(f.read().strip())
         os.kill(pid, 0)
         running = True
@@ -3223,9 +2688,9 @@ async def system_selfupdate_status():
     log_tail = ""
     done = False
     try:
-        with open(SERVUI_UPDATE_LOG, encoding="utf-8", errors="replace") as f:
+        with open(ANTIXUI_UPDATE_LOG, encoding="utf-8", errors="replace") as f:
             content = f.read()
-        done = "__SERVUI_UPDATE_DONE__" in content
+        done = "__ANTIXUI_UPDATE_DONE__" in content
         log_tail = content[-3000:]
     except OSError:
         pass
@@ -4162,7 +3627,7 @@ async def grub_iso_download_cancel():
 
 
 # ============================================================
-# 9. serv-UI Fleet Management (Tailnet-wide bulk management)
+# 9. antix-UI Fleet Management (Tailnet-wide bulk management)
 # ============================================================
 FLEET_PINS_FILE = Path(__file__).parent / "fleet_pins.json"
 SERVUI_SERVE_PORT = 3355
@@ -4174,7 +3639,7 @@ _TS_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 def _load_fleet_pins() -> list[dict]:
-    """Load pinned serv-UI hosts from fleet_pins.json."""
+    """Load pinned antix-UI hosts from fleet_pins.json."""
     try:
         with open(FLEET_PINS_FILE, encoding="utf-8") as f:
             data = json.load(f)
@@ -4279,7 +3744,7 @@ def _fleet_node_from_ts_entry(entry: dict) -> dict | None:
 
 
 async def _probe_fleet_node(node: dict, semaphore: asyncio.Semaphore) -> dict:
-    """Probe one node's serv-UI and collect its system info."""
+    """Probe one node's antix-UI and collect its system info."""
     display_host = node["fqdn"] or (node["ips"][0] if node["ips"] else node["key"])
     out = {
         **node,
@@ -4319,9 +3784,9 @@ async def _probe_pinned_nodes(pins: list[dict]) -> list[dict]:
 
 @app.get("/api/fleet/detect")
 async def fleet_detect():
-    """Detect serv-UI instances running in the Tailnet.
+    """Detect antix-UI instances running in the Tailnet.
 
-    Lists all online peers (plus this host), probes their serv-UI
+    Lists all online peers (plus this host), probes their antix-UI
     (https://<node>:3355) and collects live stats from reachable ones.
     """
     ts = await run_cmd("tailscale status --json", timeout=10)
@@ -4356,7 +3821,7 @@ async def fleet_detect():
 
 @app.get("/api/fleet/pins")
 async def fleet_pins_list():
-    """Return pinned serv-UI hosts with live stats."""
+    """Return pinned antix-UI hosts with live stats."""
     pins = _load_fleet_pins()
     results = await _probe_pinned_nodes(pins)
     order = {p["key"]: i for i, p in enumerate(pins)}
@@ -4366,7 +3831,7 @@ async def fleet_pins_list():
 
 @app.post("/api/fleet/pin")
 async def fleet_pins_add(req: Request):
-    """Pin a detected serv-UI host (persisted in fleet_pins.json)."""
+    """Pin a detected antix-UI host (persisted in fleet_pins.json)."""
     data = await _get_json(req)
     fqdn = (data.get("fqdn") or "").strip().rstrip(".").lower()
     ips = [str(i) for i in (data.get("ips") or [])]
@@ -4386,7 +3851,7 @@ async def fleet_pins_add(req: Request):
 
 @app.post("/api/fleet/unpin")
 async def fleet_pins_remove(req: Request):
-    """Unpin a serv-UI host."""
+    """Unpin a antix-UI host."""
     data = await _get_json(req)
     key = (data.get("key") or "").strip().rstrip(".").lower()
     if not key:
