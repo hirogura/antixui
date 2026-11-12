@@ -2049,7 +2049,7 @@ async def _check_app_status() -> dict:
     q_ck_bak = await run_cmd(f"test -f '{ck_home}/.conkyrc.bak'", timeout=5)
     if q_ck["returncode"] == 0:
         ck_detail = "日本語化済み" + (" (バックアップ: ~/.conkyrc.bak)" if q_ck_bak["returncode"] == 0 else "")
-    elif await run_cmd(f"test -f '{ck_home}/.conkyrc'", timeout=5)["returncode"] == 0:
+    elif (await run_cmd(f"test -f '{ck_home}/.conkyrc'", timeout=5))["returncode"] == 0:
         ck_detail = "未適用 (~/.conkyrc あり)"
     else:
         ck_detail = "未適用 (~/.conkyrc なし)"
