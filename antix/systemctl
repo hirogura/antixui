@@ -187,7 +187,9 @@ runit_start() {
 is_active_rc() {
     local n; n=$(norm_unit "$1")
     if [ -x "/etc/service/$n/run" ]; then
-        SVDIR=/etc/service sv status "$n" >/dev/null 2>&1
+        # `sv status` はサービスが supervise 下にあれば down でも rc=0 を返す。
+        # 出力の "run:" / "down:" で実際の起動状態を判定する。
+        SVDIR=/etc/service sv status "$n" 2>/dev/null | grep -q '^run:'
     else
         "$INITDIR/$n" status >/dev/null 2>&1
     fi
@@ -240,7 +242,7 @@ case "$CMD" in
         [ $# -ge 1 ] || usage_exit is-active
         n=$(norm_unit "$1")
         if runit_native && [ -x "/etc/service/$n/run" ]; then
-            if SVDIR=/etc/service sv status "$n" >/dev/null 2>&1; then
+            if SVDIR=/etc/service sv status "$n" 2>/dev/null | grep -q '^run:'; then
                 [ "$QUIET" = "1" ] || echo "active"
                 exit 0
             else
@@ -271,8 +273,12 @@ case "$CMD" in
         [ $# -ge 1 ] || usage_exit status
         n=$(norm_unit "$1")
         if runit_native && [ -x "/etc/service/$n/run" ]; then
-            SVDIR=/etc/service sv status "$n"
-            exit $?
+            out=$(SVDIR=/etc/service sv status "$n" 2>&1)
+            echo "$out"
+            case "$out" in
+                run:*) exit 0 ;;
+                *) exit 3 ;;
+            esac
         fi
         if unit_exists "$n"; then
             "$INITDIR/$n" status
