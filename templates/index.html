@@ -17,7 +17,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       </div>
       <div class="logo-info">
-        <span class="logo-text">antix-UI<span class="logo-version">v.2.9.6</span></span>
+        <span class="logo-text">antix-UI<span class="logo-version">v.2.9.7</span></span>
         <span class="logo-hostname" id="sidebar-hostname">...</span>
       </div>
     </div>
@@ -533,6 +533,39 @@
         </div>
       </div>
 
+      <h2>リモートデスクトップ</h2>
+      <div class="stat-card" style="margin-bottom:1rem;">
+        <div style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.45rem 0;">
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <span style="font-weight:600;">RDP (xrdp)</span>
+              <span id="rdp-badge"><span class="badge badge-other">確認中...</span></span>
+            </div>
+            <div class="muted" style="font-size:0.78rem;">Windows の「リモートデスクトップ接続」(mstsc) や Microsoft Remote Desktop から、このPCのデスクトップに接続できるようにします (TCP 3389)。</div>
+            <div class="muted" id="rdp-detail" style="font-size:0.78rem;"></div>
+          </div>
+        </div>
+        <div id="rdp-status" class="status-msg"></div>
+        <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="btn-rdp-install" onclick="installRemoteDesktop()">インストール</button>
+          <button class="btn btn-secondary" id="btn-rdp-disable" onclick="setRemoteDesktop(false)">無効化</button>
+          <button class="btn btn-primary" id="btn-rdp-enable" onclick="setRemoteDesktop(true)">有効化</button>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--border);margin:0.9rem 0;">
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:flex-end;">
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:180px;">
+            <label for="rdp-username">RDPログインユーザー名</label>
+            <input type="text" id="rdp-username" autocomplete="username" spellcheck="false" style="width:100%;margin-top:0.25rem;padding:0.5rem;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.85rem;">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:180px;">
+            <label for="rdp-password">パスワード</label>
+            <input type="password" id="rdp-password" autocomplete="new-password" placeholder="8文字以上" style="width:100%;margin-top:0.25rem;padding:0.5rem;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.85rem;">
+          </div>
+          <button class="btn btn-secondary" id="btn-rdp-credentials" onclick="saveRemoteDesktopCredentials()">ユーザー/パスワード設定</button>
+        </div>
+        <p class="muted" style="font-size:0.72rem;margin-top:0.5rem;margin-bottom:0;">既存ユーザー名を指定した場合は、そのOSアカウントのパスワードを変更します。存在しないユーザー名の場合は新規に作成します。</p>
+      </div>
+
       <h2>Bing壁紙</h2>
       <div class="stat-card" style="margin-bottom:1rem;">
         <div style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.45rem 0;">
@@ -627,6 +660,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=37"></script>
+  <script src="/static/app.js?v=38"></script>
 </body>
 </html>

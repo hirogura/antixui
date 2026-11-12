@@ -2245,8 +2245,183 @@ const APPS_INSTALL_DEFS = [
 async function loadAppsPage() {
   await loadAppsStatus();
   await loadAppsShortcuts();
+  await loadRemoteDesktop();
   await loadVentoyUI();
   await loadBingWallpaper();
+}
+
+// --- リモートデスクトップ (xrdp) ---
+async function loadRemoteDesktop() {
+  const badgeEl = document.getElementById('rdp-badge');
+  const detailEl = document.getElementById('rdp-detail');
+  const statusEl = document.getElementById('rdp-status');
+  if (!badgeEl) return;
+  try {
+    const resp = await fetch('/api/remote-desktop/status');
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    renderRemoteDesktop(data);
+    if (statusEl) { statusEl.className = 'status-msg'; statusEl.textContent = ''; }
+  } catch (e) {
+    badgeEl.innerHTML = '<span class="badge badge-other">状態不明</span>';
+    if (detailEl) detailEl.textContent = '';
+    if (statusEl) {
+      statusEl.className = 'status-msg show error';
+      statusEl.textContent = `状態取得エラー: ${e.message}`;
+    }
+  }
+}
+
+function renderRemoteDesktop(data) {
+  const badgeEl = document.getElementById('rdp-badge');
+  const detailEl = document.getElementById('rdp-detail');
+  const userInput = document.getElementById('rdp-username');
+  const installBtn = document.getElementById('btn-rdp-install');
+  const enableBtn = document.getElementById('btn-rdp-enable');
+  const disableBtn = document.getElementById('btn-rdp-disable');
+  if (!badgeEl) return;
+
+  if (!data.installed) {
+    badgeEl.innerHTML = '<span class="badge badge-other">未導入</span>';
+  } else if (data.enabled) {
+    badgeEl.innerHTML = '<span class="badge badge-active">有効</span>';
+  } else {
+    badgeEl.innerHTML = '<span class="badge badge-warn">無効</span>';
+  }
+
+  const lines = [];
+  if (data.installed) {
+    const states = [];
+    states.push(data.enabled ? '自動起動: 有効' : '自動起動: 無効');
+    states.push(data.active ? 'サービス: 起動中' : 'サービス: 停止中');
+    lines.push(states.join(' / '));
+    const host = data.address || data.hostname;
+    if (host) lines.push(`接続先: ${host}:${data.port}`);
+    if (data.tailscale_host) lines.push(`Tailscale: ${data.tailscale_host}:${data.port}`);
+    const userState = data.credentials_set ? 'パスワード設定済み' : 'パスワード未設定';
+    lines.push(`ログインユーザー: ${data.user || '-'} (${userState})`);
+  } else {
+    lines.push('xrdp がインストールされていません。「インストール」から導入してください。');
+  }
+  if (detailEl) detailEl.innerHTML = lines.map(escapeHtml).join('<br>');
+
+  if (userInput && document.activeElement !== userInput) {
+    userInput.value = data.user || '';
+  }
+  if (installBtn) {
+    installBtn.disabled = !!data.installed;
+    installBtn.textContent = data.installed ? 'インストール済み' : 'インストール';
+  }
+  if (enableBtn) enableBtn.disabled = !data.installed || !!data.enabled;
+  if (disableBtn) disableBtn.disabled = !data.installed || (!data.enabled && !data.active);
+}
+
+async function installRemoteDesktop() {
+  const statusEl = document.getElementById('rdp-status');
+  const installBtn = document.getElementById('btn-rdp-install');
+  if (!confirm('リモートデスクトップ (xrdp + xorgxrdp) をインストールしますか？\n\nパッケージのダウンロードに数分かかる場合があります。')) return;
+  if (installBtn) installBtn.disabled = true;
+  if (statusEl) {
+    statusEl.className = 'status-msg show info';
+    statusEl.innerHTML = '<span class="spinner"></span> インストール中... (数分かかる場合があります)';
+  }
+  try {
+    const resp = await fetch('/api/remote-desktop/install', { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (statusEl) {
+      statusEl.className = `status-msg show ${data.success ? 'success' : 'error'}`;
+      statusEl.textContent = data.message || '';
+    }
+    showStatus(data.message || 'インストールが完了しました', data.success ? 'success' : 'error');
+    renderRemoteDesktop(data);
+  } catch (e) {
+    if (statusEl) {
+      statusEl.className = 'status-msg show error';
+      statusEl.textContent = `インストールエラー: ${e.message}`;
+    }
+    if (installBtn) installBtn.disabled = false;
+  }
+}
+
+async function setRemoteDesktop(enable) {
+  const statusEl = document.getElementById('rdp-status');
+  const enableBtn = document.getElementById('btn-rdp-enable');
+  const disableBtn = document.getElementById('btn-rdp-disable');
+  if (!enable && !confirm('リモートデスクトップを無効化しますか？\n自動起動を解除して xrdp を停止します。')) return;
+  if (enableBtn) enableBtn.disabled = true;
+  if (disableBtn) disableBtn.disabled = true;
+  if (statusEl) {
+    statusEl.className = 'status-msg show info';
+    statusEl.textContent = enable ? '有効化しています...' : '無効化しています...';
+  }
+  try {
+    const resp = await fetch('/api/remote-desktop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enable }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (statusEl) {
+      statusEl.className = `status-msg show ${data.success ? 'success' : 'error'}`;
+      statusEl.textContent = data.message || '';
+    }
+    showStatus(data.message || (enable ? '有効化しました' : '無効化しました'), data.success ? 'success' : 'error');
+    renderRemoteDesktop(data);
+  } catch (e) {
+    if (statusEl) {
+      statusEl.className = 'status-msg show error';
+      statusEl.textContent = `エラー: ${e.message}`;
+    }
+    await loadRemoteDesktop();
+  }
+}
+
+async function saveRemoteDesktopCredentials() {
+  const usernameEl = document.getElementById('rdp-username');
+  const passwordEl = document.getElementById('rdp-password');
+  const statusEl = document.getElementById('rdp-status');
+  const btn = document.getElementById('btn-rdp-credentials');
+  const username = (usernameEl ? usernameEl.value : '').trim();
+  const password = passwordEl ? passwordEl.value : '';
+  if (!username) {
+    showStatus('RDPログインユーザー名を入力してください', 'error');
+    return;
+  }
+  if (password.length < 8) {
+    showStatus('パスワードは8文字以上で入力してください', 'error');
+    return;
+  }
+  if (!confirm(`ユーザー「${username}」のパスワードを設定しますか？\n\n既存ユーザーの場合はOSのログインパスワードが変更されます。存在しない場合は新しいユーザーを作成します。`)) return;
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.className = 'status-msg show info';
+    statusEl.textContent = 'ユーザー/パスワードを設定しています...';
+  }
+  try {
+    const resp = await fetch('/api/remote-desktop/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (passwordEl) passwordEl.value = '';
+    if (statusEl) {
+      statusEl.className = `status-msg show ${data.success ? 'success' : 'error'}`;
+      statusEl.textContent = data.message || '';
+    }
+    showStatus(data.message || 'ユーザー/パスワードを設定しました', data.success ? 'success' : 'error');
+    renderRemoteDesktop(data);
+  } catch (e) {
+    if (statusEl) {
+      statusEl.className = 'status-msg show error';
+      statusEl.textContent = `設定エラー: ${e.message}`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // --- Bing壁紙 (cron + スクリプト) ---

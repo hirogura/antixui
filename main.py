@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 IS_ROOT = os.getuid() == 0
 
-app = FastAPI(title="antix-UI", version="2.9.6")
+app = FastAPI(title="antix-UI", version="2.9.7")
 
 
 @app.middleware("http")
@@ -138,7 +138,12 @@ async def selfex_status():
 
 
 # --- Helper: run shell command ---
-async def run_cmd(cmd: str, timeout: int = 30, extra_env: dict | None = None) -> dict:
+async def run_cmd(
+    cmd: str,
+    timeout: int = 30,
+    extra_env: dict | None = None,
+    input_text: str | None = None,
+) -> dict:
     """Run a shell command and return stdout, stderr, returncode."""
     try:
         env = os.environ.copy()
@@ -148,11 +153,15 @@ async def run_cmd(cmd: str, timeout: int = 30, extra_env: dict | None = None) ->
 
         proc = await asyncio.create_subprocess_shell(
             cmd,
+            stdin=asyncio.subprocess.PIPE if input_text is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=input_text.encode("utf-8") if input_text is not None else None),
+            timeout=timeout,
+        )
         return {
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
@@ -2542,7 +2551,304 @@ async def lid_switch_set(req: Request):
                 **_lid_switch_state()}
 
 
-# --- 8.7 Bing壁紙 (1日1回 Bing の今日の画像で GNOME 壁紙を更新) ---
+# --- 8.7 リモートデスクトップ (xrdp) ---
+RDP_SERVICE = "xrdp"
+RDP_PORT_DEFAULT = 3389
+RDP_USER_FILE = "/var/lib/antixui/remote-desktop-user"
+RDP_RUNIT_DIR = "/etc/service/xrdp"
+RDP_RUNIT_RUN = f"{RDP_RUNIT_DIR}/run"
+RDP_USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+RDP_RUNIT_RUN_CONTENT = """#!/bin/sh
+exec 2>&1
+
+# xrdp / xrdp-sesman を runit 配下で常駐させる。
+# パッケージ付属の init スクリプトは rc*.d 前提のため、
+# runit ネイティブ環境ではこのサービスを直接生成する。
+mkdir -p /run/xrdp /run/xrdp/sockdir
+chown root:xrdp /run/xrdp /run/xrdp/sockdir 2>/dev/null || true
+chmod 2775 /run/xrdp 2>/dev/null || true
+chmod 3777 /run/xrdp/sockdir 2>/dev/null || true
+
+SESMAN_PID=
+XRDP_PID=
+cleanup() {
+    trap - TERM INT EXIT
+    [ -n "$SESMAN_PID" ] && kill "$SESMAN_PID" 2>/dev/null || true
+    [ -n "$XRDP_PID" ] && kill "$XRDP_PID" 2>/dev/null || true
+    wait "$SESMAN_PID" 2>/dev/null || true
+    wait "$XRDP_PID" 2>/dev/null || true
+    exit 0
+}
+trap cleanup TERM INT EXIT
+
+/usr/sbin/xrdp-sesman --nodaemon &
+SESMAN_PID=$!
+/usr/bin/setpriv --reuid=xrdp --regid=xrdp --init-groups \
+    /usr/sbin/xrdp --nodaemon &
+XRDP_PID=$!
+
+wait "$XRDP_PID"
+cleanup
+"""
+
+
+def _rdp_port() -> int:
+    """xrdp.ini の [Globals] port= を返す (読めなければ 3389)。"""
+    try:
+        with open("/etc/xrdp/xrdp.ini", encoding="utf-8", errors="replace") as f:
+            in_globals = False
+            for line in f:
+                s = line.strip()
+                if s.startswith("["):
+                    in_globals = s == "[Globals]"
+                    continue
+                if in_globals and s.startswith("port="):
+                    value = s.split("=", 1)[1].split()[0]
+                    return int(value)
+    except (OSError, ValueError, IndexError):
+        pass
+    return RDP_PORT_DEFAULT
+
+
+def _rdp_configured_user() -> str:
+    """antix-UI から最後に設定した RDP ユーザー名を返す。"""
+    try:
+        with open(RDP_USER_FILE, encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+async def _rdp_status() -> dict:
+    """xrdp の導入・有効化・起動状態と接続情報を返す。"""
+    pkg = await run_cmd("dpkg-query -W -f='${Status}' xrdp 2>/dev/null", timeout=10)
+    bin_check = await run_cmd("test -x /usr/sbin/xrdp", timeout=5)
+    installed = "install ok installed" in pkg["stdout"] or bin_check["returncode"] == 0
+
+    if _is_runit_native():
+        # rc*.d リンクは runit ネイティブ環境では実行されないため、
+        # 実際に再起動後も起動する runit サービスの有無で判定する。
+        enabled = os.path.isfile(RDP_RUNIT_RUN)
+    else:
+        enabled_res = await run_cmd("systemctl is-enabled xrdp 2>/dev/null", timeout=5)
+        enabled = enabled_res["returncode"] == 0 and enabled_res["stdout"].strip() == "enabled"
+        if os.path.isfile(RDP_RUNIT_RUN):
+            enabled = True
+
+    active_res = await run_cmd("systemctl is-active xrdp 2>/dev/null", timeout=5)
+    active = active_res["returncode"] == 0 and active_res["stdout"].strip() == "active"
+    pg_xrdp = await run_cmd("pgrep -x xrdp >/dev/null 2>&1", timeout=5)
+    pg_sesman = await run_cmd("pgrep -x xrdp-sesman >/dev/null 2>&1", timeout=5)
+    active = active or pg_xrdp["returncode"] == 0
+    sesman_active = pg_sesman["returncode"] == 0
+
+    hostname_res = await run_cmd("hostname 2>/dev/null", timeout=5)
+    hostname = hostname_res["stdout"].strip()
+    ips_res = await run_cmd("hostname -I 2>/dev/null", timeout=5)
+    ips = ips_res["stdout"].split()
+    address = ""
+    for ip in ips:
+        if not ip.startswith(("127.", "100.")):
+            address = ip
+            break
+    if not address and ips:
+        address = ips[0]
+
+    tailscale_host = ""
+    ts = await run_cmd("tailscale status --json 2>/dev/null", timeout=5)
+    try:
+        ts_data = json.loads(ts["stdout"])
+        tailscale_host = (ts_data.get("Self", {}).get("DNSName") or "").rstrip(".")
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        pass
+
+    username, _home, _shell = get_primary_user()
+    configured_user = _rdp_configured_user()
+    if configured_user:
+        username = configured_user
+    try:
+        pwd.getpwnam(username)
+        user_exists = True
+    except KeyError:
+        user_exists = False
+
+    return {
+        "installed": installed,
+        "enabled": enabled,
+        "active": active,
+        "sesman_active": sesman_active,
+        "port": _rdp_port(),
+        "hostname": hostname,
+        "address": address,
+        "tailscale_host": tailscale_host,
+        "user": username,
+        "user_exists": user_exists,
+        "credentials_set": bool(configured_user),
+    }
+
+
+@app.get("/api/remote-desktop/status")
+async def remote_desktop_status():
+    """RDP (xrdp) の状態を返す。"""
+    return await _rdp_status()
+
+
+@app.post("/api/remote-desktop/install")
+async def remote_desktop_install():
+    """xrdp と xorgxrdp をインストールする。"""
+    status = await _rdp_status()
+    if status["installed"]:
+        return {"success": True, "message": "xrdp はすでにインストールされています", **status}
+
+    r = await run_cmd(_sudo("apt-get update"), timeout=900)
+    if r["returncode"] != 0:
+        out = (r["stderr"] or r["stdout"]).strip()[-1500:]
+        return {"success": False, "message": f"パッケージ一覧の更新に失敗しました: {out}", **status}
+
+    r = await run_cmd(_sudo("apt-get install -y xrdp xorgxrdp"), timeout=1800)
+    out = (r["stdout"] or r["stderr"]).strip()[-3000:]
+    status = await _rdp_status()
+    ok = r["returncode"] == 0 and status["installed"]
+    if ok:
+        msg = "xrdp をインストールしました。「有効化」を押すと自動起動を設定してサービスを開始します。"
+    else:
+        msg = "xrdp のインストールに失敗しました: " + ((r["stderr"] or r["stdout"]).strip()[-1500:] or "不明なエラー")
+    return {"success": ok, "message": msg, "output": out, **status}
+
+
+@app.post("/api/remote-desktop")
+async def remote_desktop_set(req: Request):
+    """xrdp の有効化/無効化を切り替える。"""
+    data = await _get_json(req)
+    enable = data.get("enable", True)
+    if isinstance(enable, str):
+        enable = enable.strip().lower() not in ("false", "0", "no", "off", "disable")
+    enable = bool(enable)
+
+    status = await _rdp_status()
+    if not status["installed"]:
+        return {"success": False, "message": "先に xrdp をインストールしてください", **status}
+
+    if enable:
+        if _is_runit_native():
+            # パッケージの postinst が init スクリプトで起動している場合があるため、
+            # runit サービスを作る前に停止して二重起動を避ける。
+            await run_cmd(_sudo("/etc/init.d/xrdp stop >/dev/null 2>&1 || true"), timeout=60)
+            write_cmd = (
+                f"{_sudo('mkdir -p ' + shlex.quote(RDP_RUNIT_DIR))}"
+                f" && printf %s {shlex.quote(RDP_RUNIT_RUN_CONTENT)}"
+                f" | {_sudo('tee ' + shlex.quote(RDP_RUNIT_RUN))} >/dev/null"
+                f" && {_sudo('chmod 755 ' + shlex.quote(RDP_RUNIT_RUN))}"
+            )
+            r = await run_cmd(write_cmd, timeout=30)
+            if r["returncode"] != 0:
+                return {"success": False,
+                        "message": "runit サービスの作成に失敗しました: "
+                                   + (r["stderr"] or r["stdout"]).strip()[:500],
+                        **status}
+        r = await run_cmd(_sudo(f"systemctl enable --now {RDP_SERVICE}"), timeout=120)
+        if r["returncode"] != 0:
+            # systemd/shim が無い環境向けフォールバック
+            r = await run_cmd(
+                f"{_sudo('update-rc.d xrdp defaults')} && {_sudo('/etc/init.d/xrdp start')}",
+                timeout=120,
+            )
+            if r["returncode"] != 0:
+                return {"success": False,
+                        "message": "有効化に失敗しました: " + (r["stderr"] or r["stdout"]).strip()[:500],
+                        **status}
+        msg = "リモートデスクトップを有効化しました。TCP 3389 で接続できます。"
+    else:
+        r = await run_cmd(_sudo(f"systemctl disable --now {RDP_SERVICE}"), timeout=120)
+        if _is_runit_native():
+            # shim が /etc/service/xrdp を削除する。念のため残存分も掃除する。
+            await run_cmd(_sudo(f"rm -rf {shlex.quote(RDP_RUNIT_DIR)}"), timeout=30)
+        else:
+            if r["returncode"] != 0:
+                r = await run_cmd(
+                    f"{_sudo('update-rc.d -f xrdp remove')} && {_sudo('/etc/init.d/xrdp stop')}",
+                    timeout=120,
+                )
+        await run_cmd(_sudo("/etc/init.d/xrdp stop >/dev/null 2>&1 || true"), timeout=60)
+        msg = "リモートデスクトップを無効化しました。"
+
+    # runit はサービスディレクトリ作成後に起動するため、状態が反映されるまで少し待つ
+    check = "pgrep -x xrdp >/dev/null 2>&1 && pgrep -x xrdp-sesman >/dev/null 2>&1"
+    for _ in range(20):
+        running = (await run_cmd(check, timeout=5))["returncode"] == 0
+        if running == enable:
+            break
+        await asyncio.sleep(0.25)
+
+    return {"success": True, "message": msg, **(await _rdp_status())}
+
+
+@app.post("/api/remote-desktop/credentials")
+async def remote_desktop_credentials(req: Request):
+    """RDP ログイン用のユーザーとパスワードを設定する。"""
+    data = await _get_json(req)
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "")
+
+    if not RDP_USERNAME_RE.match(username):
+        raise HTTPException(status_code=400, detail="ユーザー名は英小文字・数字・_・- で指定してください (先頭は英小文字または_)")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="パスワードは8文字以上で指定してください")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="パスワードは128文字以内で指定してください")
+    if any(ch in password for ch in ("\n", "\r", "\x00")):
+        raise HTTPException(status_code=400, detail="パスワードに改行や NUL 文字は使用できません")
+
+    try:
+        pw = pwd.getpwnam(username)
+    except KeyError:
+        pw = None
+
+    if pw and (pw.pw_uid == 0 or pw.pw_uid < 1000):
+        return {"success": False, "message": "root やシステム用ユーザーは RDP ログインユーザーに指定できません",
+                **await _rdp_status()}
+
+    created = False
+    if not pw:
+        r = await run_cmd(_sudo(f"useradd -m -U -s /bin/bash {shlex.quote(username)}"), timeout=120)
+        if r["returncode"] != 0:
+            return {"success": False,
+                    "message": "ユーザーの作成に失敗しました: " + (r["stderr"] or r["stdout"]).strip()[:500],
+                    **await _rdp_status()}
+        created = True
+        group_script = (
+            'for g in audio video plugdev netdev; do '
+            'getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" ' + shlex.quote(username) + '; '
+            'done'
+        )
+        await run_cmd(_sudo("sh -c " + shlex.quote(group_script)), timeout=60)
+
+    # パスワードはコマンドラインに載せず、標準入力から chpasswd に渡す
+    r = await run_cmd(_sudo("chpasswd"), timeout=30, input_text=f"{username}:{password}\n")
+    if r["returncode"] != 0:
+        return {"success": False,
+                "message": "パスワードの設定に失敗しました: " + (r["stderr"] or r["stdout"]).strip()[:500],
+                **await _rdp_status()}
+
+    save_cmd = (
+        f"{_sudo('mkdir -p ' + shlex.quote(os.path.dirname(RDP_USER_FILE)))}"
+        f" && printf %s {shlex.quote(username)} | {_sudo('tee ' + shlex.quote(RDP_USER_FILE))} >/dev/null"
+        f" && {_sudo('chmod 644 ' + shlex.quote(RDP_USER_FILE))}"
+    )
+    r = await run_cmd(save_cmd, timeout=30)
+    if r["returncode"] != 0:
+        return {"success": False,
+                "message": "RDP ユーザー情報の保存に失敗しました: " + (r["stderr"] or r["stdout"]).strip()[:500],
+                **await _rdp_status()}
+
+    if created:
+        msg = f"ユーザー {username} を作成し、パスワードを設定しました。"
+    else:
+        msg = f"ユーザー {username} のパスワードを設定しました。"
+    return {"success": True, "message": msg, **(await _rdp_status())}
+
+
+# --- 8.8 Bing壁紙 (1日1回 Bing の今日の画像で GNOME 壁紙を更新) ---
 # Snap 版 BingWall は動作が重いため、cron + シェルスクリプトで軽量に実現する。
 # リポジトリ同梱の bing-wallpaper.sh を /usr/local/bin へ置き、
 # /etc/cron.d/bing-wallpaper で 1日1回 root として実行する。
