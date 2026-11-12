@@ -160,6 +160,29 @@ make_runit_service() {
     return 0
 }
 
+# runit サービスを起動する。
+# make_runit_service で /etc/service/<unit> を作成した直後は、runsvdir が
+# supervise/ok を作るまで少し時間がかかる。待たずに sv start すると
+# "unable to open supervise/ok" で失敗し、インストーラが set -e で中断する。
+runit_start() {
+    local n="$1" i=0
+    while [ "$i" -lt 50 ]; do
+        [ -e "/etc/service/$n/supervise/ok" ] && break
+        sleep 0.1
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if SVDIR=/etc/service sv start "$n" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+    # 最後はエラーメッセージをそのまま出す
+    SVDIR=/etc/service sv start "$n"
+}
+
 # サービスが起動しているか (runit サービスなら sv、それ以外は init.d の status で判定)
 is_active_rc() {
     local n; n=$(norm_unit "$1")
@@ -274,7 +297,7 @@ case "$CMD" in
             if [ -x "/etc/service/$n/run" ]; then
                 case "$CMD" in
                     start)
-                        SVDIR=/etc/service sv start "$n"
+                        runit_start "$n"
                         exit $?
                         ;;
                     stop)
@@ -283,7 +306,7 @@ case "$CMD" in
                         ;;
                     restart|reload)
                         SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
-                        SVDIR=/etc/service sv start "$n"
+                        runit_start "$n"
                         exit $?
                         ;;
                 esac
@@ -329,7 +352,7 @@ case "$CMD" in
         if [ "$NOW" -eq 1 ] && [ "$RC" -eq 0 ]; then
             if runit_native && [ -x "/etc/service/$n/run" ]; then
                 if [ "$CMD" = "enable" ]; then
-                    SVDIR=/etc/service sv start "$n" >/dev/null 2>&1 || true
+                    runit_start "$n" >/dev/null 2>&1 || true
                 else
                     SVDIR=/etc/service sv stop "$n" >/dev/null 2>&1 || true
                 fi
