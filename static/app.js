@@ -1724,9 +1724,17 @@ async function openSelfEx() {
   const isActive = data.active !== false;
   if (data.installed && isActive && data.url) {
     window.open(data.url, '_blank');
-  } else if (data.installed && data.url) {
+  } else if (data.installed && !isActive) {
+    // 途中で失敗した環境では「インストール済み」のまま停止していることがある。
+    // 再インストールできるようにする (キャンセル時は手動起動の案内のみ)。
+    if (!confirm('selfExはインストール済みですが、サービスが起動していません。\n再インストールしますか？')) {
+      switchTab('terminal');
+      showStatus('selfExは停止しています。`sudo systemctl start selfex` で起動できます。再インストールする場合はサイドバーの「selfEx」をもう一度クリックしてください。', 'info');
+      return;
+    }
     switchTab('terminal');
-    showStatus('selfExはインストール済みですが、サービスが停止しています。`sudo systemctl start selfex` で起動できます。', 'info');
+    showStatus('selfExを再インストール中... ターミナルで進捗を確認できます。', 'info');
+    setTimeout(runSelfExInstall, 500);
   } else if (data.installed) {
     switchTab('terminal');
     showStatus('selfExはインストール済みです。URLを取得できませんでした。', 'info');
@@ -1734,14 +1742,16 @@ async function openSelfEx() {
     if (!confirm('selfExはまだインストールされていません。\nインストールしますか？')) return;
     switchTab('terminal');
     showStatus('selfExをインストール中... ターミナルで進捗を確認できます。', 'info');
-    setTimeout(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const installCmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/hirogura/selfex/main/install-selfex1.sh)"\n';
-        ws.send(JSON.stringify({ type: 'input', data: installCmd }));
-      } else {
-        showStatus('ターミナルに接続できません', 'error');
-      }
-    }, 500);
+    setTimeout(runSelfExInstall, 500);
+  }
+}
+
+function runSelfExInstall() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const installCmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/hirogura/selfex/main/install-selfex1.sh)"\n';
+    ws.send(JSON.stringify({ type: 'input', data: installCmd }));
+  } else {
+    showStatus('ターミナルに接続できません', 'error');
   }
 }
 
@@ -1859,7 +1869,9 @@ async function openDiskManager() {
     return;
   }
 
-  if (data.installed) {
+  // active が undefined の旧バックエンドでは従来通り開く（楽観的に扱う）
+  const isActive = data.active !== false;
+  if (data.installed && isActive) {
     // Tailscale DNS取得失敗などでURLが無い場合も、要件通り別タブで開く。
     // Tailnet経由アクセス時は https、localhostアクセス時は http が正しい。
     const host = location.hostname;
@@ -1867,19 +1879,34 @@ async function openDiskManager() {
       ? `http://${host}:3361/`
       : `https://${host}:3361/`;
     window.open(data.url || fallbackUrl, '_blank');
+  } else if (data.installed && !isActive) {
+    // 途中で失敗した環境では「インストール済み」のまま停止していることがある。
+    // /opt/diskmanager を作り直して再インストールできるようにする。
+    if (!confirm('Disk Managerはインストール済みですが、サービスが起動していません。\n再インストールしますか？\n\n/opt/diskmanager を削除して入れ直します (このディレクトリ内の変更は失われます)。')) {
+      switchTab('terminal');
+      showStatus('Disk Managerは停止しています。`sudo systemctl start diskmanager` で起動できます。再インストールする場合はサイドバーの「Disk Manager」をもう一度クリックしてください。', 'info');
+      return;
+    }
+    switchTab('terminal');
+    showStatus('Disk Managerを再インストール中... ターミナルで進捗を確認できます。', 'info');
+    setTimeout(() => runDiskManagerInstall(true), 500);
   } else {
     if (!confirm('Disk Managerはまだインストールされていません。\nインストールしますか？')) return;
     switchTab('terminal');
     showStatus('Disk Managerをインストール中... ターミナルで進捗を確認できます。', 'info');
-    setTimeout(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const installCmd = 'sudo wget -O /tmp/diskmanager-install.sh https://raw.githubusercontent.com/hirogura/diskmanager/main/install.sh && sudo bash /tmp/diskmanager-install.sh\n';
-        ws.send(JSON.stringify({ type: 'input', data: installCmd }));
-      } else {
-        showStatus('ターミナルに接続できません', 'error');
-      }
-    }, 500);
+    setTimeout(() => runDiskManagerInstall(false), 500);
   }
+}
+
+function runDiskManagerInstall(reinstall) {
+  if (!(ws && ws.readyState === WebSocket.OPEN)) {
+    showStatus('ターミナルに接続できません', 'error');
+    return;
+  }
+  // 再インストール時は途中失敗で残ったディレクトリを消してから入れ直す
+  const cleanup = reinstall ? 'sudo rm -rf /opt/diskmanager && ' : '';
+  const installCmd = cleanup + 'sudo wget -O /tmp/diskmanager-install.sh https://raw.githubusercontent.com/hirogura/diskmanager/main/install.sh && sudo bash /tmp/diskmanager-install.sh\n';
+  ws.send(JSON.stringify({ type: 'input', data: installCmd }));
 }
 
 // --- Backup / Restore ---

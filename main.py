@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 IS_ROOT = os.getuid() == 0
 
-app = FastAPI(title="antix-UI", version="2.9.7")
+app = FastAPI(title="antix-UI", version="2.9.8")
 
 
 @app.middleware("http")
@@ -120,7 +120,11 @@ async def selfex_status():
         r["returncode"] == 0
         for r in (svc_enabled, svc_active, svc_file, server_js)
     )
-    active = svc_active["returncode"] == 0
+    active = svc_active["returncode"] == 0 and svc_active["stdout"].strip() == "active"
+    if not active:
+        # shim が入っていない環境でも実際のプロセスで起動状態を判定する
+        pg = await run_cmd("pgrep -f '[s]elfex/server.js' >/dev/null 2>&1", timeout=5)
+        active = pg["returncode"] == 0
 
     url = None
     if installed:
@@ -1472,12 +1476,17 @@ async def diskmanager_status():
     svc_enabled = await run_cmd("systemctl is-enabled diskmanager 2>/dev/null", timeout=5)
     svc_active = await run_cmd("systemctl is-active diskmanager 2>/dev/null", timeout=5)
     svc_file = await run_cmd("test -f /etc/systemd/system/diskmanager.service", timeout=5)
-    dir_check = await run_cmd("test -d /opt/diskmanager", timeout=5)
     server_check = await run_cmd("test -f /opt/diskmanager/server.py", timeout=5)
+    # 空の残骸ディレクトリだけで「インストール済み」と誤判定しない
     installed = any(
         r["returncode"] == 0
-        for r in (svc_enabled, svc_active, svc_file, dir_check, server_check)
+        for r in (svc_enabled, svc_active, svc_file, server_check)
     )
+    active = svc_active["returncode"] == 0 and svc_active["stdout"].strip() == "active"
+    if not active:
+        # shim が入っていない環境でも実際のプロセスで起動状態を判定する
+        pg = await run_cmd("pgrep -f '[d]iskmanager/server.py' >/dev/null 2>&1", timeout=5)
+        active = pg["returncode"] == 0
 
     url = None
     if installed:
@@ -1491,7 +1500,7 @@ async def diskmanager_status():
         except (json.JSONDecodeError, KeyError):
             pass
 
-    return {"installed": installed, "url": url}
+    return {"installed": installed, "active": active, "url": url}
 
 
 # ============================================================
