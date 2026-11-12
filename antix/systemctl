@@ -144,6 +144,13 @@ make_runit_service() {
     envs=$(grep '^Environment=' "$u" | sed 's/^Environment=//' | tr '\n' ' ')
     user=$(grep -m1 '^User=' "$u" | sed 's/^User=//')
     wd=${wd:-/}
+    # パッケージの postinst 等が init.d 経由で既に起動している場合、
+    # runit サービス作成後に二重起動となるため先に停止する
+    # (libvirtd 等で pidfile 競合により起動ループになる)。
+    if [ -x "$INITDIR/$n" ] && "$INITDIR/$n" status >/dev/null 2>&1; then
+        "$INITDIR/$n" stop >/dev/null 2>&1 || true
+        sleep 0.5
+    fi
     mkdir -p "/etc/service/$n"
     {
         echo '#!/bin/sh'
@@ -337,12 +344,17 @@ case "$CMD" in
             [ "$a" = "--now" ] && NOW=1
         done
         unit_exists "$n" || { echo "Unit $n.service not found." >&2; exit 5; }
+        # enable 時は先に disable マーカーを消す。
+        # make_runit_service はマーカーがあるとサービスを再生成しないため、
+        # disable → enable の順で操作すると /etc/service が復活しない。
+        if [ "$CMD" = "enable" ]; then
+            rm -f "$DISABLED_DIR/$n" 2>/dev/null || true
+        fi
         if runit_native; then
             make_runit_service "$n"
         fi
         RC=0
         if [ "$CMD" = "enable" ]; then
-            rm -f "$DISABLED_DIR/$n" 2>/dev/null || true
             update-rc.d "$n" defaults >/dev/null 2>&1 || RC=$?
             if [ "$RC" -eq 0 ]; then echo "Created symlink $n.service"; fi
         else

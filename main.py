@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 IS_ROOT = os.getuid() == 0
 
-app = FastAPI(title="antix-UI", version="2.9.8")
+app = FastAPI(title="antix-UI", version="2.9.9")
 
 
 @app.middleware("http")
@@ -1430,8 +1430,14 @@ async def selfcode_status():
 async def easylxd_status():
     """Check if Easy LXD is installed and return its URL."""
     svc = await run_cmd("systemctl is-enabled easy-lxd 2>/dev/null", timeout=5)
-    dir_check = await run_cmd("test -d /opt/easy-lxd", timeout=5)
+    active_res = await run_cmd("systemctl is-active easy-lxd 2>/dev/null", timeout=5)
+    dir_check = await run_cmd("test -f /opt/easy-lxd/server.js", timeout=5)
     installed = svc["returncode"] == 0 or dir_check["returncode"] == 0
+    active = active_res["returncode"] == 0 and active_res["stdout"].strip() == "active"
+    if not active:
+        # shim が入っていない環境でも実際のプロセスで起動状態を判定する
+        pg = await run_cmd("pgrep -f '[e]asy-lxd/server.js' >/dev/null 2>&1", timeout=5)
+        active = pg["returncode"] == 0
 
     url = None
     if installed:
@@ -1445,15 +1451,21 @@ async def easylxd_status():
         except (json.JSONDecodeError, KeyError):
             pass
 
-    return {"installed": installed, "url": url}
+    return {"installed": installed, "active": active, "url": url}
 
 
 @app.get("/api/vmmanager/status")
 async def vmmanager_status():
     """Check if VM Manager is installed and return its URL."""
     svc = await run_cmd("systemctl is-enabled vm-manage 2>/dev/null", timeout=5)
-    dir_check = await run_cmd("test -d /opt/vm-manage", timeout=5)
+    active_res = await run_cmd("systemctl is-active vm-manage 2>/dev/null", timeout=5)
+    dir_check = await run_cmd("test -f /opt/vm-manage/app.py", timeout=5)
     installed = svc["returncode"] == 0 or dir_check["returncode"] == 0
+    active = active_res["returncode"] == 0 and active_res["stdout"].strip() == "active"
+    if not active:
+        # shim が入っていない環境でも実際のプロセスで起動状態を判定する
+        pg = await run_cmd("pgrep -f '[v]m-manage/app.py' >/dev/null 2>&1", timeout=5)
+        active = pg["returncode"] == 0
 
     url = None
     if installed:
@@ -1467,7 +1479,7 @@ async def vmmanager_status():
         except (json.JSONDecodeError, KeyError):
             pass
 
-    return {"installed": installed, "url": url}
+    return {"installed": installed, "active": active, "url": url}
 
 
 @app.get("/api/diskmanager/status")

@@ -281,6 +281,16 @@ fi
 if $SUDO lxc network show lxdbr0 &>/dev/null; then
   echo "[SKIP] lxdbr0 は既に存在します"
 else
+  # Debian/antiX の lxd は dnsmasq を推奨パッケージとして要求するが、
+  # 最小構成では導入されず `lxc network create` が失敗する。
+  if [ "$IS_ARCH" = false ] && ! command -v dnsmasq &>/dev/null; then
+    echo "[RUN]  dnsmasq-base をインストールします..."
+    export DEBIAN_FRONTEND=noninteractive
+    $SUDO apt-get install -y dnsmasq-base || {
+      echo "ERROR: dnsmasq-base のインストールに失敗しました"
+      exit 1
+    }
+  fi
   echo "[RUN]  lxdbr0 を作成します（IPv4 NAT有効）..."
   $SUDO lxc network create lxdbr0 ipv4.nat=true
 fi

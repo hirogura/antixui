@@ -22,6 +22,7 @@ INSTALL_DIR="/opt/easy-lxd"
 PORT=3329
 REPO_URL="https://github.com/hirogura/easylxd"
 GIT_BRANCH="main"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== Easy LXD UI Installer (GitHub版) ==="
 echo ""
@@ -220,9 +221,20 @@ rm -f "$TMP_TAR"
 echo "GitHub からの取得が完了しました"
 
 # antiX 対応: snap 前提の lxd-setup.sh を apt 対応版に置き換える
-if [ -f /opt/servui-antix/antix/easylxd/lxd-setup.sh ]; then
-  cp /opt/servui-antix/antix/easylxd/lxd-setup.sh "$INSTALL_DIR/lxd-setup.sh"
-  echo "antiX 用 lxd-setup.sh (apt 対応版) を適用しました"
+# (旧配置 /opt/servui-antix と現行配置 /opt/antix-ui の両方に対応)
+LXD_SETUP_ANTIX=""
+for candidate in \
+  "${SCRIPT_DIR}/lxd-setup.sh" \
+  "/opt/antix-ui/antix/easylxd/lxd-setup.sh" \
+  "/opt/servui-antix/antix/easylxd/lxd-setup.sh"; do
+  if [ -f "$candidate" ]; then
+    LXD_SETUP_ANTIX="$candidate"
+    break
+  fi
+done
+if [ -n "$LXD_SETUP_ANTIX" ]; then
+  cp "$LXD_SETUP_ANTIX" "$INSTALL_DIR/lxd-setup.sh"
+  echo "antiX 用 lxd-setup.sh (apt 対応版) を適用しました: $LXD_SETUP_ANTIX"
 fi
 
 # --- 取得ファイルの確認 ---
@@ -343,15 +355,24 @@ fi
 echo "  Dir:   ${INSTALL_DIR}"
 
 # --- 起動確認 (応答が無ければ原因切り分けの手がかりを表示) ---
+# runit ではサービス作成直後はまだ listen していないため、数秒リトライする。
 echo ""
 echo "起動を確認中..."
-if systemctl is-active --quiet easy-lxd 2>/dev/null \
-  && curl -fsSL -m 10 "http://127.0.0.1:${PORT}/api/instances" >/dev/null 2>&1; then
+START_OK=false
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet easy-lxd 2>/dev/null \
+    && curl -fsSL -m 2 "http://127.0.0.1:${PORT}/api/instances" >/dev/null 2>&1; then
+    START_OK=true
+    break
+  fi
+  sleep 1
+done
+if [ "$START_OK" = true ]; then
   echo "起動確認 OK: http://127.0.0.1:${PORT} が応答しました"
 else
   echo "WARNING: easy-lxd サービスが応答しません。以下で原因を確認してください:"
   echo "  systemctl status easy-lxd"
-  echo "  journalctl -u easy-lxd -n 50"
+  echo "  tail -50 /var/log/easy-lxd.log"
   echo "  lxc info / lxc list (LXD デーモンの状態)"
 fi
 echo ""

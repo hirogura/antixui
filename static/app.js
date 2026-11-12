@@ -1793,23 +1793,42 @@ async function openEasyLXD() {
     const resp = await fetch('/api/easylxd/status');
     const data = await resp.json();
 
-    if (data.installed && data.url) {
-      window.open(data.url, '_blank');
+    // active が undefined の旧バックエンドでは従来通り開く（楽観的に扱う）
+    const isActive = data.active !== false;
+    const host = location.hostname;
+    const fallbackUrl = (host === 'localhost' || host === '127.0.0.1')
+      ? `http://${host}:3329/`
+      : `https://${host}:3329/`;
+
+    if (data.installed && isActive) {
+      window.open(data.url || fallbackUrl, '_blank');
+    } else if (data.installed && !isActive) {
+      if (!confirm('Easy LXDはインストール済みですが、サービスが起動していません。\n再インストールしますか？')) {
+        switchTab('terminal');
+        showStatus('Easy LXDは停止しています。`sudo systemctl start easy-lxd` で起動できます。再インストールする場合はサイドバーの「Easy LXD」をもう一度クリックしてください。', 'info');
+        return;
+      }
+      switchTab('terminal');
+      showStatus('Easy LXDを再インストール中... ターミナルで進捗を確認できます。', 'info');
+      setTimeout(runEasyLXDInstall, 500);
     } else {
       if (!confirm('Easy LXDはまだインストールされていません。\nインストールしますか？')) return;
       switchTab('terminal');
-      showStatus('Easy LXDをインストール中...', 'info');
-      setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const installCmd = 'cp /opt/antix-ui/antix/easylxd/install-easylxd1.sh /tmp/install-easylxd1.sh && chmod +x /tmp/install-easylxd1.sh && sudo /tmp/install-easylxd1.sh\n';
-          ws.send(JSON.stringify({ type: 'input', data: installCmd }));
-        } else {
-          showStatus('ターミナルに接続できません', 'error');
-        }
-      }, 500);
+      showStatus('Easy LXDをインストール中... ターミナルで進捗を確認できます。', 'info');
+      setTimeout(runEasyLXDInstall, 500);
     }
   } catch (e) {
     showStatus(`Easy LXD確認エラー: ${e.message}`, 'error');
+  }
+}
+
+function runEasyLXDInstall() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // 同梱の antiX 用 lxd-setup.sh を確実に使うため、リポジトリ内のスクリプトを直接実行する
+    const installCmd = 'sudo /opt/antix-ui/antix/easylxd/install-easylxd1.sh\n';
+    ws.send(JSON.stringify({ type: 'input', data: installCmd }));
+  } else {
+    showStatus('ターミナルに接続できません', 'error');
   }
 }
 
@@ -1819,24 +1838,44 @@ async function openVMManager() {
     const resp = await fetch('/api/vmmanager/status');
     const data = await resp.json();
 
-    if (data.installed && data.url) {
-      window.open(data.url, '_blank');
+    // active が undefined の旧バックエンドでは従来通り開く（楽観的に扱う）
+    const isActive = data.active !== false;
+    const host = location.hostname;
+    const fallbackUrl = (host === 'localhost' || host === '127.0.0.1')
+      ? `http://${host}:8090/`
+      : `https://${host}:8090/`;
+
+    if (data.installed && isActive) {
+      window.open(data.url || fallbackUrl, '_blank');
+    } else if (data.installed && !isActive) {
+      if (!confirm('VM Managerはインストール済みですが、サービスが起動していません。\n再インストールしますか？\n\n/opt/vm-manage を削除して入れ直します (VM ディスクや定義は /opt/vm 等に残ります)。')) {
+        switchTab('terminal');
+        showStatus('VM Managerは停止しています。`sudo systemctl start vm-manage` で起動できます。再インストールする場合はサイドバーの「VM Manager」をもう一度クリックしてください。', 'info');
+        return;
+      }
+      switchTab('terminal');
+      showStatus('VM Managerを再インストール中... ターミナルで進捗を確認できます。', 'info');
+      setTimeout(() => runVMManagerInstall(true), 500);
     } else {
       if (!confirm('VM Managerはまだインストールされていません。\nインストールしますか？')) return;
       switchTab('terminal');
-      showStatus('VM Managerをインストール中...', 'info');
-      setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const installCmd = 'curl -fsSL -o /tmp/install-vmmanager1.sh https://raw.githubusercontent.com/hirogura/vmmanager/main/install-vmmanager1.sh && chmod +x /tmp/install-vmmanager1.sh && sudo /tmp/install-vmmanager1.sh\n';
-          ws.send(JSON.stringify({ type: 'input', data: installCmd }));
-        } else {
-          showStatus('ターミナルに接続できません', 'error');
-        }
-      }, 500);
+      showStatus('VM Managerをインストール中... ターミナルで進捗を確認できます。', 'info');
+      setTimeout(() => runVMManagerInstall(false), 500);
     }
   } catch (e) {
     showStatus(`VM Manager確認エラー: ${e.message}`, 'error');
   }
+}
+
+function runVMManagerInstall(reinstall) {
+  if (!(ws && ws.readyState === WebSocket.OPEN)) {
+    showStatus('ターミナルに接続できません', 'error');
+    return;
+  }
+  // 再インストール時は途中失敗で残ったディレクトリを消してから入れ直す
+  const cleanup = reinstall ? 'sudo rm -rf /opt/vm-manage && ' : '';
+  const installCmd = cleanup + 'curl -fsSL -o /tmp/install-vmmanager1.sh https://raw.githubusercontent.com/hirogura/vmmanager/main/install-vmmanager1.sh && chmod +x /tmp/install-vmmanager1.sh && sudo /tmp/install-vmmanager1.sh\n';
+  ws.send(JSON.stringify({ type: 'input', data: installCmd }));
 }
 
 // --- Disk Manager ---
